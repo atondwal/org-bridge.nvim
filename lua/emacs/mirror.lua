@@ -331,6 +331,7 @@ function M.refresh_spans(buf)
   faces.add(res.faces)
   for _, r in ipairs(need) do api.nvim_buf_clear_namespace(buf, NS, r[1], r[2] + 1) end
   local prio = {}
+  local function line_len(line) return #(api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or "") end
   local function hide(line, sc, ec)
     if ec > sc then api.nvim_buf_set_extmark(buf, NS, line, sc, { end_col = ec, conceal = "", strict = false }) end
   end
@@ -377,11 +378,11 @@ function M.refresh_spans(buf)
       opts.hl_group = faces.group(face)
       opts.priority = prio[key]
       -- A span over the newline: Emacs's :extend, to the window edge.
-      if ec > #(api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or "") then
+      if ec > line_len(line) then
         opts.end_row, opts.end_col, opts.hl_eol = line + 1, 0, true
       end
       api.nvim_buf_set_extmark(buf, NS, line, sc, opts)
-    elseif conceals(st) and not (sc == 0 and ec >= #(api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or "")) then
+    elseif conceals(st) and not (sc == 0 and ec >= line_len(line)) then
       -- Wholly invisible lines are folds' business: concealing them would
       -- leave blank lines wherever Neovim opens a fold Emacs keeps closed.
       opts.conceal = ""

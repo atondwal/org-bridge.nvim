@@ -121,7 +121,9 @@ return {
   -- is :extend (org-block is); other faces on a newline stop at the text.
   ["an :extend face on the newline fills the window line, others don't"] = function(t)
     t.open("extend.org", "* A\n#+begin_src text\ncode\n#+end_src\n")
-    t.eval([[(with-current-buffer "extend.org" (overlay-put (make-overlay 1 5) 'face 'bold))]])
+    t.eval([[(with-current-buffer "extend.org"
+      (overlay-put (make-overlay 1 5) 'face 'bold)
+      (overlay-put (make-overlay 1 5) 'face 'nvb-test-undefined-face))]])
     t.command("ignore")
     local function extended(row)
       for _, m in ipairs(marks(row)) do
@@ -130,6 +132,7 @@ return {
     end
     t.eq(extended(2), "EmacsFace_org_block", "org-block on the newline")
     t.eq(extended(0), nil, "bold on the newline")
+    -- An undefined face (also on row 0) is skipped, as it was for the text.
   end,
 
   -- Column view draws its table with overlays on unchanged text.

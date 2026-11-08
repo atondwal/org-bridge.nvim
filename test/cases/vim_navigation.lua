@@ -272,4 +272,13 @@ return {
     t.command("ignore")
     t.eq(t.eval("(reverse nvb-test-log)"), "((pre 1) (post 3) (pre 3) (post 3))")
   end,
+
+  ["a hook's error during a Neovim motion still moves point and runs the command"] = function(t)
+    t.open("nav_hook_error.org", t.DOC)
+    t.cursor(1)
+    t.eval([[(add-hook 'pre-command-hook (lambda () (when (bobp) (error "boom"))) nil t)]])
+    t.cursor(3)
+    pcall(t.command, "end-of-line")
+    t.eq(t.eval("(list (line-number-at-pos) (eolp))"), "(3 t)")
+  end,
 }

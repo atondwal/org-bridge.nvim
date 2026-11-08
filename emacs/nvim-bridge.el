@@ -433,10 +433,12 @@ ELLIPSIS whether Emacs draws one (agenda filters hide lines without)."
                  (setq next (next-single-char-property-change next 'invisible nil end)))
                (goto-char pos)
                ;; `invisible-p' is t only for invisibility without ellipsis.
-               ;; The run's first line shows its text or the ellipsis, unless
-               ;; the run starts it without one (Magit's): then no row is
-               ;; drawn for it, and a line starting where the run ends shows.
-               (let* ((bare (eq (invisible-p pos) t)) (rowless (and bare (bolp)))
+               ;; A run hangs on the line it starts in, which shows its text or
+               ;; the ellipsis. Without an ellipsis, a run from a line's start
+               ;; (Magit's) draws no row: its lines start at `pos', and a line
+               ;; at `next' shows.
+               (let* ((no-ellipsis (eq (invisible-p pos) t))
+                      (rowless (and no-ellipsis (bolp)))
                       first last)
                  (unless rowless (forward-line 1))
                  (while (and (if rowless (< (point) next) (<= (point) next))
@@ -446,7 +448,7 @@ ELLIPSIS whether Emacs draws one (agenda filters hide lines without)."
                    (forward-line 1))
                  (when first
                    (let ((l1 (line-at first)))
-                     (push (list (1- l1) (line-at last) (if bare :false t)) ranges)))))
+                     (push (list (1- l1) (line-at last) (if no-ellipsis :false t)) ranges)))))
              (setq pos next))))
        (nreverse ranges)))))
 
@@ -556,9 +558,7 @@ A FACE span covering the newline fills the rest of the window line."
                 (push (list line (funcall col pos) (funcall col next) f) spans)))))
           (if (< next eol)
               (setq pos next)
-            ;; A face on the newline that is :extend fills the rest of the
-            ;; window line (Magit's diff backgrounds, org-block): a span
-            ;; one byte past the text.
+            ;; :extend faces on the newline: a span one byte past the text.
             (when (< eol (point-max))
               (dolist (f (seq-filter #'nvb--extend-p (nvb--faces-at eol)))
                 (push (list line (funcall col eol) (1+ (funcall col eol)) f) spans)))
@@ -573,7 +573,12 @@ A FACE span covering the newline fills the rest of the window line."
 (defun nvb--extend-p (name)
   "Whether face NAME is :extend, drawn past the end of the line."
   (let ((anon (gethash name nvb--anon-faces)))
-    (eq t (if anon (plist-get anon :extend) (face-attribute (intern name) :extend nil t)))))
+    (if anon
+        (or (eq t (plist-get anon :extend))
+            (seq-some (lambda (f) (and (symbolp f) (nvb--extend-p (symbol-name f))))
+                      (ensure-list (plist-get anon :inherit))))
+      (and (facep (intern-soft name))
+           (eq t (face-attribute (intern name) :extend nil t))))))
 
 (defun nvb--overlay-string-spans (beg end)
   "Zero-width replacement spans for the strings overlays draw before or
@@ -1090,7 +1095,10 @@ PARAMS has either :keys (kbd notation) or :command (a command name), and
       ;; hooks that compare point across a command (Magit's section
       ;; highlight) see it move.
       (unless (= want (point))
-        (nvb--run-command (lambda () (interactive) (goto-char want)) nil nil)))
+        ;; A hook's error must not leave point behind or lose the reply.
+        (condition-case e
+            (nvb--run-command (lambda () (interactive) (goto-char want)) nil nil)
+          ((debug error quit) (goto-char want) (setq err (error-message-string e))))))
     (if (plist-get params :mark)
         (progn (push-mark (nvb--pos (plist-get params :mark)) t t)
                (setq mark-active t))
