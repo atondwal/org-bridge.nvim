@@ -432,17 +432,21 @@ ELLIPSIS whether Emacs draws one (agenda filters hide lines without)."
                (while (and (< next end) (invisible-p next))
                  (setq next (next-single-char-property-change next 'invisible nil end)))
                (goto-char pos)
-               (forward-line 1)
-               (let (first last)
-                 (while (and (<= (point) next) (not (eobp)) (<= (line-end-position) next))
+               ;; `invisible-p' is t only for invisibility without ellipsis.
+               ;; The run's first line shows its text or the ellipsis, unless
+               ;; the run starts it without one (Magit's): then no row is
+               ;; drawn for it, and a line starting where the run ends shows.
+               (let* ((bare (eq (invisible-p pos) t)) (rowless (and bare (bolp)))
+                      first last)
+                 (unless rowless (forward-line 1))
+                 (while (and (if rowless (< (point) next) (<= (point) next))
+                             (not (eobp)) (<= (line-end-position) next))
                    (unless first (setq first (point)))
                    (setq last (point))
                    (forward-line 1))
                  (when first
-                   (let ((l1 (line-at first))
-                         ;; `invisible-p' is t only for invisibility without ellipsis.
-                         (ellipsis (if (eq (invisible-p pos) t) :false t)))
-                     (push (list (1- l1) (line-at last) ellipsis) ranges)))))
+                   (let ((l1 (line-at first)))
+                     (push (list (1- l1) (line-at last) (if bare :false t)) ranges)))))
              (setq pos next))))
        (nreverse ranges)))))
 

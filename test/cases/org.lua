@@ -186,6 +186,16 @@ return {
     t.eq(vim.fn.foldtextresult(1), "* A")
   end,
 
+  -- As Magit hides a collapsed section: from a line's start to a line's start.
+  ["text hidden from line start to line start folds those lines"] = function(t)
+    t.open("bol.org", "* A\nx\ny\n\nz\n")
+    t.eval([[(with-current-buffer "bol.org"
+      (add-to-invisibility-spec 'nvbtest)
+      (put-text-property 5 9 'invisible 'nvbtest))]])
+    t.command("ignore")
+    t.eq(t.folds(), { "1-3" })
+  end,
+
   ["an overlay's before-string is drawn in Neovim"] = function(t)
     if vim.fn.has("nvim-0.10") == 0 then t.skip("inline virtual text needs Neovim 0.10") end
     t.open("before.org", "* A\nbody\n")
