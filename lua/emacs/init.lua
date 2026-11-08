@@ -367,6 +367,11 @@ local function install_keys(buf, kind)
   for _, m in ipairs(api.nvim_buf_get_keymap(buf, "")) do
     if m.desc == "org-bridge.nvim" then vim.keymap.del(m.mode, m.lhs, { buffer = buf }) end
   end
+  -- A file of another type Emacs shows (a link to a .txt) stays in sync
+  -- but keeps Neovim's keys.
+  if not mirror.state[buf].special and not vim.tbl_contains(mirror.config.filetypes, vim.bo[buf].filetype) then
+    return
+  end
   -- Org's messages say "press C-u C-c C-c".
   map(buf, "n", "<C-u>", guarded(universal_argument))
   if kind == "menu" then install_menu_keys(buf) else install_edit_keys(buf) end

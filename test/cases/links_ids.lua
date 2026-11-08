@@ -108,6 +108,19 @@ return {
     t.eq(#vim.fn.win_findbuf(h_buf), 1, h .. " still shown")
   end,
 
+  ["the .txt a link opens keeps Neovim's keys but stays in sync"] = function(t)
+    local txt = t.file("keys.txt", "plain\n")
+    t.open("keyslink.org", "* H\n[[file:keys.txt]]\n")
+    t.cursor(2, 3)
+    t.keys("C-c C-o")
+    t.eq(api.nvim_buf_get_name(0), txt)
+    for _, m in ipairs({ "n", "i" }) do
+      t.eq(api.nvim_buf_get_keymap(0, m), {}, m .. " maps")
+    end
+    api.nvim_buf_set_lines(0, 0, -1, false, { "typed" })
+    t.eq(t.emacs_lines(txt), { "typed" }, "Emacs has Neovim's edit")
+  end,
+
   -- The external app is a harmless shell command that records its argument.
   ["C-c C-o on a .pdf link runs the org-file-apps command, not a viewer in Neovim"] = function(t)
     local pdf = t.file("doc.pdf", "%PDF-1.4\n")
