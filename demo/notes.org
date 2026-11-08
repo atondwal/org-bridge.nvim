@@ -1,0 +1,34 @@
+#+TITLE: org-bridge.nvim demo
+
+* TODO Try folding                                                      :demo:
+SCHEDULED: <2026-11-07 Sat>
+Press TAB on a heading to cycle it, S-TAB to cycle the whole file.
+Neovim's zo / zc / zR / zM drive the same folds.
+** Child heading
+Body of the child.
+
+* TODO Change states
+Put the cursor on a heading and press C-c C-t: pick a key from the menu.
+S-left / S-right cycle states; S-up / S-down on a date change it.
+
+* Tables
+| name   | qty |
+|--------+-----|
+| apples | 3 |
+| pears | 12 |
+Edit a cell and press TAB to realign.
+
+* Links and markup
+A [[https://orgmode.org][descriptive link]] hides its brackets, *bold* and =code=.
+
+* Vim on org text
+dar deletes this whole subtree (ar is a subtree, ir its body); cie
+replaces the code of the block below, and = indents it as elisp.
+#+begin_src emacs-lisp
+(+ 1 2)
+#+end_src
+Type on a heading with A, then press . on another: tags realign on Esc.
+
+* Agenda and capture
+:EmacsAgenda then "a" for the week (t / RET / q inside it).
+:EmacsCapture then "t" files a task in inbox.org; finish with C-c C-c.
