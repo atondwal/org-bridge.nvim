@@ -376,6 +376,10 @@ function M.refresh_spans(buf)
       prio[key] = (prio[key] or 200) - 1
       opts.hl_group = faces.group(face)
       opts.priority = prio[key]
+      -- A span over the newline: Emacs's :extend, to the window edge.
+      if ec > #(api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or "") then
+        opts.end_row, opts.end_col, opts.hl_eol = line + 1, 0, true
+      end
       api.nvim_buf_set_extmark(buf, NS, line, sc, opts)
     elseif conceals(st) and not (sc == 0 and ec >= #(api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or "")) then
       -- Wholly invisible lines are folds' business: concealing them would

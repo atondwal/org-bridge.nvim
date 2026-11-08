@@ -507,7 +507,8 @@ Each span is (LINE START-BYTE END-BYTE FACE [DISPLAY [RUNS]]). Without
 DISPLAY, FACE is a face name, or nil for concealed (invisible) text. With
 DISPLAY, the text is drawn as that string (a `display' property or a
 composition), in FACE if non-nil. RUNS, when the string has faces of its
-own (the clock overlay's dots and time), is [[TEXT FACE]...] covering it."
+own (the clock overlay's dots and time), is [[TEXT FACE]...] covering it.
+A FACE span covering the newline fills the rest of the window line."
   (nvb--in-view
    (save-excursion
     (goto-char (point-min))
@@ -551,13 +552,28 @@ own (the clock overlay's dots and time), is [[TEXT FACE]...] covering it."
                     (setcar (nthcdr 2 prev) (funcall col next))
                   (push (list line (funcall col pos) (funcall col next) nil) spans))))
              (t
-              (dolist (f (append (nvb--face-names (get-char-property pos 'face))
-                                 (nvb--face-names (get-char-property pos 'font-lock-face))))
+              (dolist (f (nvb--faces-at pos))
                 (push (list line (funcall col pos) (funcall col next) f) spans)))))
           (if (< next eol)
               (setq pos next)
+            ;; A face on the newline that is :extend fills the rest of the
+            ;; window line (Magit's diff backgrounds, org-block): a span
+            ;; one byte past the text.
+            (when (< eol (point-max))
+              (dolist (f (seq-filter #'nvb--extend-p (nvb--faces-at eol)))
+                (push (list line (funcall col eol) (1+ (funcall col eol)) f) spans)))
             (setq pos (1+ eol) line (1+ line)))))
       (append (nreverse spans) (nvb--overlay-string-spans beg end))))))
+
+(defun nvb--faces-at (pos)
+  "Names of the faces at POS, `face' before `font-lock-face'."
+  (append (nvb--face-names (get-char-property pos 'face))
+          (nvb--face-names (get-char-property pos 'font-lock-face))))
+
+(defun nvb--extend-p (name)
+  "Whether face NAME is :extend, drawn past the end of the line."
+  (let ((anon (gethash name nvb--anon-faces)))
+    (eq t (if anon (plist-get anon :extend) (face-attribute (intern name) :extend nil t)))))
 
 (defun nvb--overlay-string-spans (beg end)
   "Zero-width replacement spans for the strings overlays draw before or
