@@ -259,4 +259,17 @@ return {
     agree(t, path)
     vim.cmd("only")
   end,
+
+  -- Emacs: the motion is a command of its own, so a mode comparing point
+  -- across one (Magit's section highlight) sees the cursor leave line 1.
+  ["a Neovim motion runs pre-command-hook before it and post-command-hook after"] = function(t)
+    t.open("nav_hooks.org", t.DOC)
+    t.cursor(1)
+    t.eval([[(progn (setq nvb-test-log nil)
+      (add-hook 'pre-command-hook (lambda () (push (list 'pre (line-number-at-pos)) nvb-test-log)) nil t)
+      (add-hook 'post-command-hook (lambda () (push (list 'post (line-number-at-pos)) nvb-test-log)) nil t))]])
+    t.cursor(3)
+    t.command("ignore")
+    t.eq(t.eval("(reverse nvb-test-log)"), "((pre 1) (post 3) (pre 3) (post 3))")
+  end,
 }

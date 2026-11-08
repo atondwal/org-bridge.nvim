@@ -787,6 +787,7 @@ them between commands (`org-agenda-show-window' for SPC SPC)."
                    (nvb--split-for layout))))
     (cl-loop for win in windows
              for w in layout
+             for i from 1
              do (let ((buf (cond ((plist-get w :id) (nvb--buffer (plist-get w :id)))
                                  ((plist-get w :file) (nvb--visit (plist-get w :file)))
                                  (t (get-buffer-create nvb--placeholder)))))
@@ -794,7 +795,9 @@ them between commands (`org-agenda-show-window' for SPC SPC)."
                   (set-window-parameter win 'nvb-win (plist-get w :win))
                   (nvb--resize win (plist-get w :height))
                   (set-window-start win (with-current-buffer buf (nvb--pos (list (plist-get w :top) 0))) t)
-                  (set-window-point win (with-current-buffer buf (nvb--pos (plist-get w :point))))))
+                  ;; `nvb-rpc-exec' moves a selected mirror's point, as a command.
+                  (unless (and (eql i selected) (plist-get w :id))
+                    (set-window-point win (with-current-buffer buf (nvb--pos (plist-get w :point)))))))
     (select-window (or (and selected (nth (1- selected) windows)) (frame-first-window)))))
 
 (defun nvb--fit-frame (layout)
@@ -1083,7 +1086,11 @@ PARAMS has either :keys (kbd notation) or :command (a command name), and
     (nvb--reveal buf (plist-get params :revealed))
     (when (plist-get params :point)
       (setq want (nvb--pos (plist-get params :point)))
-      (goto-char want))
+      ;; Neovim's motion is a command of its own, as it would be in Emacs:
+      ;; hooks that compare point across a command (Magit's section
+      ;; highlight) see it move.
+      (unless (= want (point))
+        (nvb--run-command (lambda () (interactive) (goto-char want)) nil nil)))
     (if (plist-get params :mark)
         (progn (push-mark (nvb--pos (plist-get params :mark)) t t)
                (setq mark-active t))
