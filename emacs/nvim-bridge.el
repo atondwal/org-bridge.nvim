@@ -1134,9 +1134,11 @@ repeat-sensitive commands like `org-cycle'.")
   ;; last one (Neovim's synced edits included): C-_ and the agenda's undo
   ;; take back one command at a time.
   (undo-auto--add-boundary)
+  ;; A command run by name follows M-x's RET: keyboard input, so
+  ;; `map-y-or-n-p' (save-some-buffers) asks instead of popping up a dialog.
+  (setq last-nonmenu-event (if keys (aref keys (1- (length keys))) ?\r))
   (when keys
-    (setq last-command-event (aref keys (1- (length keys)))
-          last-nonmenu-event last-command-event)
+    (setq last-command-event last-nonmenu-event)
     ;; Batch Emacs reads no keys, so `this-command-keys' is empty; org's
     ;; speed commands look up the key typed there. Only character keys fit
     ;; the string it takes.

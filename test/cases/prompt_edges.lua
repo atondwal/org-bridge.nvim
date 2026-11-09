@@ -182,4 +182,17 @@ return {
     t.eq(t.lines(), { "* A", "SCHEDULED: <" .. org_date(0) .. ">" })
     agree(t, path)
   end,
+
+  -- Emacs (M-x, as save-some-buffers asks): "Do a? (y, n, !, ., q, ...)".
+  -- The first command of a fresh Emacs, which no key has run before.
+  ["a command run by name asks map-y-or-n-p's question"] = function(t)
+    require("emacs.rpc").stop()
+    t.open("pe_ynp.org", "* A\n")
+    t.eval([[(defun nvb-test-ynp () (interactive)
+      (map-y-or-n-p "Do %s? " (lambda (x) (message "did %s" x)) '("a")))]])
+    t.after(function() t.eval("(fmakunbound 'nvb-test-ynp)") end)
+    t.answer("y")
+    t.command("nvb-test-ynp")
+    t.eq(prompts(t)[1]:match("^read_key Do a%?") ~= nil, true, vim.inspect(prompts(t)))
+  end,
 }
