@@ -159,6 +159,24 @@ A `quit' answer (the user pressed Escape) signals `quit'."
 (defconst nvb--gc-cons-threshold (* 64 1024 1024)
   "Bytes allocated between collections while serving Neovim.")
 
+(defconst nvb--idle-check-seconds 0.2
+  "How often idle Emacs looks for changes made outside a request.")
+
+(defvar nvb--unpulled nil
+  "Non-nil from telling Neovim of a change until it asks for the state.")
+
+(defun nvb--signature ()
+  "What Neovim sees of Emacs, cheaply: the windows, their buffers and
+points, and each shown or mirrored buffer's text, properties and overlay
+count (magit-blame's headings)."
+  (cons (mapcar (lambda (w) (list w (window-buffer w) (window-point w) (window-start w)))
+                (window-list nil 'never (frame-first-window)))
+        (mapcar (lambda (b)
+                  (with-current-buffer b
+                    (list b (buffer-modified-tick) (length (overlays-in (point-min) (point-max))))))
+                (seq-filter #'buffer-live-p
+                            (append (nvb--displayed-buffers) (hash-table-values nvb--mirrors))))))
+
 (defun nvb-serve (socket)
   "Listen on SOCKET and serve one Neovim client until it disconnects."
   (when (file-exists-p socket) (delete-file socket))
@@ -178,8 +196,16 @@ A `quit' answer (the user pressed Escape) signals `quit'."
                  (kill-emacs 0))))
   (princ "READY\n" #'external-debugging-output)
   (while t
-    ;; Waiting on any process adds ~10ms per message; wait on the client.
-    (accept-process-output nvb--conn 30)
+    (let ((before (nvb--signature)))
+      ;; Waiting on any process adds ~10ms per message; wait on the client.
+      (accept-process-output nvb--conn nvb--idle-check-seconds)
+      ;; Timers, other processes' output and their sentinels (git exiting
+      ;; for Magit, emacsclient opening a commit message) ran meanwhile.
+      ;; If they changed anything, Neovim asks for the state
+      ;; (`nvb-rpc-refresh') when it can take it, not while the user types.
+      (when (and (process-live-p nvb--conn) (not (equal before (nvb--signature))))
+        (setq nvb--unpulled t)
+        (nvb--send (list :method "changed"))))
     (while nvb--inbox
       (nvb--handle (pop nvb--inbox)))))
 
@@ -756,6 +782,9 @@ ones (M-f) stay Neovim's."
              ;; Column view binds its keys on overlays; Neovim forwards keys
              ;; as in read-only Emacs buffers while it is on.
              :columns (nvb--bool (bound-and-true-p org-columns-overlays))
+             ;; A file Emacs edits for emacsclient (Magit's commit message)
+             ;; takes Emacs's keys (C-c C-c) whatever its type.
+             :server (nvb--bool (bound-and-true-p server-buffer-clients))
              :keys (nvb--bound-keys buf)
              ;; The agenda keeps its state here: "Org-Agenda Week Log Follow".
              :mode_line (string-trim (concat (nvb--format-simple mode-name)
@@ -860,16 +889,21 @@ capture's %a) need its buffer. Unsaved Neovim edits aren't in it."
             nvb--unmirrored t))
     buf))
 
+(defvar nvb--new-windows 0 "The last name given a window Emacs made (negative).")
+
 (defun nvb--window-states ()
   "Emacs's windows after a command, for Neovim to mirror: (:win W :id ID
-:point P :top T :selected S), where W is the Neovim window it was made from (nil
-for a window the command created). A window back on a file Neovim doesn't
-mirror (`nvb--visit') has :file instead of :id."
+:point P :top T :selected S), where W is the Neovim window it was made from
+or, for a window Emacs made, a negative number: reported again before the
+next command (`nvb-rpc-refresh'), it names the same new Neovim window. A
+window back on a file Neovim doesn't mirror (`nvb--visit') has :file
+instead of :id."
   (vconcat
    (mapcar (lambda (w)
              (let ((b (window-buffer w)))
                (append
-                (list :win (window-parameter w 'nvb-win)
+                (list :win (or (window-parameter w 'nvb-win)
+                               (set-window-parameter w 'nvb-win (cl-decf nvb--new-windows)))
                       :selected (nvb--bool (eq w (selected-window))))
                 (unless (nvb--internal-p b)
                   (append (if (buffer-local-value 'nvb--unmirrored b)
@@ -1068,10 +1102,13 @@ defined it: binding it void would discard the defcustom loading sets."
 
 (defvar nvb--kill-sent nil "The kill-ring entry Neovim last received.")
 
-(defun nvb-rpc-exec (params)
+(cl-defun nvb-rpc-exec (params)
   "Run a command in buffer ID at POINT, then report the new state.
 PARAMS has either :keys (kbd notation) or :command (a command name), and
 :kill when Neovim yanked text since the last command."
+  ;; Neovim sent its windows before taking a change Emacs made on its own
+  ;; (a window emacsclient opened): applying them would close that window.
+  (when nvb--unpulled (cl-return-from nvb-rpc-exec (list :stale t)))
   (nvb--apply-syncs (plist-get params :syncs))
   ;; Neovim's latest yank, so C-y and C-c C-x C-y paste what p would.
   (when (plist-get params :kill)
@@ -1209,6 +1246,13 @@ of an indirect one (capture's edits are its target's)."
     (dolist (b bufs)
       (when (buffer-base-buffer b) (cl-pushnew (buffer-base-buffer b) bufs)))
     (list :buffers (vconcat (mapcar #'nvb--buffer-state bufs)))))
+
+(defun nvb-rpc-refresh (params)
+  "Take Neovim's edits and report the state, for changes Emacs made
+outside a request. Unlike `nvb-rpc-exec', Emacs's windows stay as they are."
+  (setq nvb--unpulled nil)
+  (nvb--apply-syncs (plist-get params :syncs))
+  (nvb--state))
 
 (defun nvb-rpc-bounds (params)
   "[FIRST LAST] (0-based lines) of the org :subtree or :element at POINT in

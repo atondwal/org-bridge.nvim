@@ -10,6 +10,9 @@ local M = {}
 local NS = api.nvim_create_namespace("emacs")
 local SYNC_DELAY_MS = 150
 local POINT_SYNC_DELAY_MS = 150
+-- How often a change Emacs made outside a command checks whether the
+-- call in flight is done.
+local PULL_RETRY_MS = 50
 -- Lines fetched beyond the visible range so small scrolls stay highlighted.
 local SPAN_MARGIN = 40
 local HAS_0_10 = vim.fn.has("nvim-0.10") == 1
@@ -558,6 +561,7 @@ local function apply_buffer(s, join_undo)
     st.spans = nil
   end
   st.speed = s.speed
+  st.server = s.server
   -- Read-only Emacs buffers and column view take keys the way Emacs does.
   local kind = ((st.special and s.readonly) or s.columns) and "menu" or "edit"
   local keys_sig = table.concat(s.keys)
@@ -842,23 +846,30 @@ end
 -- this, not the cursor, is point (C-c . twice makes a range at the end).
 local emacs_point
 
+-- Neovim windows split for windows Emacs made, by the negative number
+-- Emacs named them with until the next command names them itself.
+local made = {}
+
+-- Emacs's windows as last applied, by Neovim window: { id, point, top }.
+local reported = {}
+
 -- Mirror Emacs's windows after a command. Each Emacs window names the
 -- Neovim window it was made from: that window shows its buffer and point;
--- a window with no name is new (split); a sent window Emacs no longer has
+-- a window Emacs made is new (split); a sent window Emacs no longer has
 -- was deleted (close it).
 local function apply_windows(res, sent)
   local sent_top = {}
   for _, s in ipairs(sent) do sent_top[s.win] = s.top end
-  local kept, prev, selected = {}, nil, nil
+  local kept, prev, selected, now = {}, nil, nil, {}
   for i, r in ipairs(res.windows) do
-    local w = r.win
-    if not (w and api.nvim_win_is_valid(w)) then
+    local w = made[r.win] or r.win
+    if not api.nvim_win_is_valid(w) then
       -- A new window goes below the one before it, or, first on screen,
       -- above the first window that exists (a restored layout).
       local next_existing
       for j = i + 1, #res.windows do
-        local nw = res.windows[j].win
-        if nw and api.nvim_win_is_valid(nw) then next_existing = nw break end
+        local nw = made[res.windows[j].win] or res.windows[j].win
+        if api.nvim_win_is_valid(nw) then next_existing = nw break end
       end
       if prev then
         api.nvim_set_current_win(prev)
@@ -870,6 +881,7 @@ local function apply_windows(res, sent)
         vim.cmd("belowright split")
       end
       w = api.nvim_get_current_win()
+      made[r.win] = w
     end
     kept[w] = true
     local b = r.id and by_id[r.id]
@@ -891,10 +903,13 @@ local function apply_windows(res, sent)
     end
     if r.selected then
       selected = { win = w, buf = b, point = r.point }
-      emacs_point = b and { buf = b, point = r.point }
+      -- No point: a pull's, which Emacs didn't move.
+      if r.point or not b then emacs_point = b and { buf = b, point = r.point } end
     end
+    now[w] = { id = r.id, top = r.top, point = r.point or (reported[w] or {}).point }
     prev = w
   end
+  reported = now
   -- Windows Emacs had no room for were never in its layout to delete.
   for _, w in ipairs(res.unplaced) do kept[w] = true end
   for _, s in ipairs(sent) do
@@ -980,7 +995,9 @@ end
 -- Keys typed in Insert mode that must go through Emacs (emacs_typing),
 -- oldest first. They run before any later command, in order.
 local typed = {}
-local run
+local run, apply_state, pull
+-- Whether Emacs changed something outside a command since the last pull.
+local changed = false
 
 -- Neovim's newest unnamed-register yank or delete, for Emacs's kill ring
 -- (sent with the next command). Emacs's kills come back the other way.
@@ -1054,6 +1071,7 @@ function M.exec(opts)
 end
 
 run = function(opts)
+  if changed then pull() end
   local buf = api.nvim_get_current_buf()
   if not state[buf] and vim.tbl_contains(M.config.filetypes, vim.bo[buf].filetype) then
     M.attach(buf)
@@ -1098,9 +1116,26 @@ run = function(opts)
   params.syncs, delivered = collect_syncs()
   params.layout, params.selected = layout()
   local res = rpc.call("exec", params)
+  if res.stale then
+    -- Emacs changed on its own just before (a commit message opened):
+    -- show that instead, and drop the command, made for other windows.
+    pending_kill = params.kill
+    return pull()
+  end
   delivered()
   -- A jump in Emacs (org-goto, a link): <C-o> comes back here.
   if res.jumped then vim.cmd("normal! m'") end
+  apply_state(res, params.layout, opts.join_undo)
+  if res.region then show_region(res.region) end
+  after_last = snapshot()
+  report(res)
+  vim.cmd("redrawstatus!")
+end
+
+-- Emacs's state after a command or a pull: buffers, then windows (against
+-- those Neovim sent, or a pull's), spans, mode line and kill.
+apply_state = function(res, sent, join_undo)
+  local st = state[api.nvim_get_current_buf()]
   for _, id in ipairs(res.dead) do
     local b = by_id[id]
     if b then
@@ -1109,13 +1144,13 @@ run = function(opts)
       if special and api.nvim_buf_is_valid(b) then api.nvim_buf_delete(b, { force = true }) end
     end
   end
-  apply_buffers(res.buffers, opts.join_undo)
+  apply_buffers(res.buffers, join_undo)
   -- Insert mode in an edit buffer (a note, capture) ends with it, however
   -- it began (C-c C-c typed in Insert mode).
   local typing_in_edit = st and st.special and st.kind == "edit" and vim.fn.mode():find("^i")
   local was_auto_insert = auto_insert
   if typing_in_edit then auto_insert = true end
-  apply_windows(res, params.layout)
+  if sent then apply_windows(res, sent) end
   -- Still there (it clears the flag on leaving): only for this command.
   if typing_in_edit and auto_insert then auto_insert = was_auto_insert end
   for b, bst in pairs(state) do
@@ -1131,11 +1166,43 @@ run = function(opts)
     -- Org's subtree cut/copy: paste it with p, as Emacs pastes with C-y.
     vim.fn.setreg('"', res.kill, res.kill:sub(-1) == "\n" and "l" or "c")
   end
-  if res.region then show_region(res.region) end
-  after_last = snapshot()
-  report(res)
+end
+
+-- Emacs changed something outside a command (Magit refreshing when git
+-- exits, emacsclient opening a commit message). Neovim takes the state as
+-- after a command once it isn't mid-call or in Insert mode or a prompt;
+-- a command takes it first, since running one puts Neovim's windows back.
+pull = function()
+  changed = false
+  local syncs, delivered = collect_syncs()
+  local res = rpc.call("refresh", { syncs = syncs })
+  delivered()
+  local sent = {}
+  for w, r in pairs(reported) do
+    if api.nvim_win_is_valid(w) then sent[#sent + 1] = { win = w, top = r.top } end
+  end
+  for _, r in ipairs(res.windows) do
+    local old = reported[made[r.win] or r.win]
+    -- Emacs didn't move it; Neovim's cursor may have (j, k): keep that.
+    if old and old.id == r.id and vim.deep_equal(old.point, r.point) then r.point = nil end
+  end
+  -- Before the first command Emacs's windows aren't Neovim's.
+  apply_state(res, next(reported) and sent)
   vim.cmd("redrawstatus!")
 end
+
+local function pull_when_ready()
+  if not changed or not rpc.running() then return end
+  if rpc.depth > 0 then return vim.defer_fn(pull_when_ready, PULL_RETRY_MS) end
+  if vim.fn.mode() == "n" then pull() end
+end
+
+rpc.handlers.changed = function()
+  changed = true
+  vim.schedule(pull_when_ready)
+end
+
+api.nvim_create_autocmd("ModeChanged", { pattern = "*:n", callback = function() vim.schedule(pull_when_ready) end })
 
 ---------------------------------------------------------------------------
 -- Requests from Emacs
@@ -1169,6 +1236,8 @@ function M.reset()
     end
     unbind(buf)
   end
+  -- The next Emacs numbers its windows afresh.
+  made, reported, changed = {}, {}, false
 end
 
 -- Neovim reloaded buf from disk (:e!): Emacs's old folds no longer apply.

@@ -50,7 +50,8 @@ Open an `.org` file. In normal mode these keys go to Emacs: `<Tab>`, `<S-Tab>`,
 `<M-CR>`, `<C-CR>`, `<S-CR>`, `<M-S-CR>`, `<C-S-CR>`, `<M-arrows>`,
 `<M-S-arrows>`, `<S-arrows>`, `<C-S-arrows>` and `<M-x>`, plus anything starting with `<C-c>`
 (Emacs asks for the rest of the sequence). A file of another type that Emacs
-opens (a link to a `.txt`) stays in sync with Emacs but keeps Neovim's keys.
+opens (a link to a `.txt`) stays in sync with Emacs but keeps Neovim's keys,
+unless Emacs edits it for `emacsclient` (Magit's commit message).
 
 Emacs's point is *between* characters; Neovim's Normal-mode cursor is *on*
 one. Point goes just before the character under the cursor, so a command
@@ -137,6 +138,18 @@ Neovim while a clock runs offers to clock out first.
 Neovim does all file writes. When Emacs saves (capture, `org-save-all-org-buffers`),
 the save goes through `:write`.
 
+What Emacs does on its own between commands (a timer, a process finishing,
+a file `emacsclient` opens) shows up in Neovim by itself, once you are in
+Normal mode.
+
+### Magit
+
+Magit is not a dependency, but works if your `init` loads it.
+`:EmacsCommand magit-status` opens the status buffer in a split, where
+Magit's keys go to Emacs. The status refreshes by itself when git finishes.
+`c c` opens the commit message below the diff, as in Emacs: type it in
+Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels.
+
 ## Options
 
 `setup()` takes: `init` (Elisp file), `emacs` (executable), `log` (file),
@@ -180,7 +193,8 @@ Neovim starts Emacs in the background and talks to it over a pipe, one JSON
 message per line. Neovim owns the files; Emacs keeps a copy of each buffer,
 kept in step line by line. A forwarded key runs as an Emacs command, and Emacs
 sends back the text it changed, the cursor, folds, faces and any windows it
-opened. See `emacs/nvim-bridge.el` (the server) and `lua/emacs/` (the client).
+opened. When something changes between commands, Emacs says so and Neovim
+asks for the same report. See `emacs/nvim-bridge.el` (the server) and `lua/emacs/` (the client).
 
 The bridge itself doesn't depend on org. Set `filetypes` to try it on other
 major modes; only org is tested.
