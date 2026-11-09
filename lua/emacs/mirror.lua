@@ -1202,6 +1202,14 @@ apply_state = function(res, sent, join_undo)
       M.refresh_spans(b)
     end
   end
+  -- Emacs may have run a program that changed files (git checkout): Neovim
+  -- reloads them, asking where it has unsaved edits, and a mirror's reload
+  -- gives Emacs the new text (on_reload). :checktime alone skips hidden
+  -- buffers, whose Emacs copies commands still read (the agenda).
+  vim.cmd("checktime")
+  for b, bst in pairs(state) do
+    if not bst.special then vim.cmd("checktime " .. b) end
+  end
   M.modeline = res.modeline
   if res.kill then
     -- Org's subtree cut/copy: paste it with p, as Emacs pastes with C-y.
