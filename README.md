@@ -142,12 +142,15 @@ What Emacs does on its own between commands (a timer, a process finishing,
 a file `emacsclient` opens) shows up in Neovim by itself, once you are in
 Normal mode.
 
-### Magit
+## Magit
 
-Magit is not a dependency, but works if your `init` loads it.
+Magit isn't a dependency, but works when your `init` loads it.
 `:EmacsCommand magit-status` opens the status buffer in a split, where
-Magit's keys go to Emacs. The status refreshes by itself when git finishes.
-`c c` opens the commit message below the diff, as in Emacs: type it in
+Magit's keys go to Emacs. Its menus (`c`, `l`, `b`: transients) show in a
+float, and the keys you type go to the menu until a key closes it, as in
+Emacs: `-a` toggles a switch, `c` runs a command, `q` says "Unbound
+suffix", `<C-g>` or `<Esc>` closes it. The status refreshes by itself when
+git finishes. `c c` opens the commit message below the diff: type it in
 Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels.
 
 ## Options
