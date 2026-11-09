@@ -163,7 +163,7 @@ A `quit' answer (the user pressed Escape) signals `quit'."
   "How often idle Emacs looks for changes made outside a request.")
 
 (defvar nvb--unpulled nil
-  "Non-nil from telling Neovim of a change until it asks for the state.")
+  "Non-nil from telling Neovim its windows changed until it asks for the state.")
 
 (defun nvb--signature ()
   "What Neovim sees of Emacs, cheaply: the windows, their buffers and
@@ -203,9 +203,11 @@ count (magit-blame's headings)."
       ;; for Magit, emacsclient opening a commit message) ran meanwhile.
       ;; If they changed anything, Neovim asks for the state
       ;; (`nvb-rpc-refresh') when it can take it, not while the user types.
-      (when (and (process-live-p nvb--conn) (not (equal before (nvb--signature))))
-        (setq nvb--unpulled t)
-        (nvb--send (list :method "changed"))))
+      (let ((after (nvb--signature)))
+        (when (and (process-live-p nvb--conn) (not (equal before after)))
+          ;; Only a window change makes Neovim's layout wrong for a command.
+          (unless (equal (car before) (car after)) (setq nvb--unpulled t))
+          (nvb--send (list :method "changed")))))
     (while nvb--inbox
       (nvb--handle (pop nvb--inbox)))))
 

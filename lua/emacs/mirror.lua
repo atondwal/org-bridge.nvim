@@ -1139,7 +1139,7 @@ apply_state = function(res, sent, join_undo)
   for _, id in ipairs(res.dead) do
     local b = by_id[id]
     if b then
-      local special = state[b].special
+      local special = state[b].special or state[b].server
       unbind(b)
       if special and api.nvim_buf_is_valid(b) then api.nvim_buf_delete(b, { force = true }) end
     end
@@ -1194,7 +1194,10 @@ end
 local function pull_when_ready()
   if not changed or not rpc.running() then return end
   if rpc.depth > 0 then return vim.defer_fn(pull_when_ready, PULL_RETRY_MS) end
-  if vim.fn.mode() == "n" then pull() end
+  if vim.fn.mode() == "n" then
+    local ok, err = pcall(pull)
+    if not ok then M.error(tostring(err)) end
+  end
 end
 
 rpc.handlers.changed = function()
@@ -1202,7 +1205,10 @@ rpc.handlers.changed = function()
   vim.schedule(pull_when_ready)
 end
 
-api.nvim_create_autocmd("ModeChanged", { pattern = "*:n", callback = function() vim.schedule(pull_when_ready) end })
+api.nvim_create_autocmd("ModeChanged", {
+  group = api.nvim_create_augroup("org-bridge.nvim.pull", { clear = true }),
+  pattern = "*:n", callback = function() vim.schedule(pull_when_ready) end,
+})
 
 ---------------------------------------------------------------------------
 -- Requests from Emacs

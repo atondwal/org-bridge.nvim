@@ -101,7 +101,8 @@ return {
 
   -- How Magit's commit message arrives: git runs emacsclient, the server
   -- opens the file while Emacs is idle.
-  ["a file emacsclient opens appears with Emacs's keys, and C-x # finishes it"] = function(t)
+  -- Twice: the second time reuses the buffer Neovim kept (Magit's second commit).
+  ["a file emacsclient opens appears with Emacs's keys, and C-x # finishes it, twice"] = function(t)
     if vim.fn.executable("emacsclient") == 0 then t.skip("no emacsclient") end
     local msg = t.file("MSG.txt", "")
     t.open("client.org", "* A\n")
@@ -110,19 +111,26 @@ return {
       (setq server-socket-dir %q server-name "nvb-test")
       (make-directory server-socket-dir t)
       (set-file-modes server-socket-dir #o700)
-      (server-start)
-      (start-process "client" nil "emacsclient" "-s" (expand-file-name server-name server-socket-dir) %q))]])
-      :format(t.WORK .. "/server", msg))
+      ;; As with-editor's mode: buffer-local state a reload would reset.
+      (add-hook 'server-visit-hook (lambda () (setq-local nvb-test-visited t)))
+      (server-start))]]):format(t.WORK .. "/server"))
     -- Stop the server without asking about clients left.
     t.after(function() t.eval("(server-start t t)") end)
-    wait_for("the file", function() return api.nvim_buf_get_name(0) == msg end)
-    t.eq(vim.fn.maparg("<C-c>", "n") ~= "", true, "C-c goes to Emacs")
-    api.nvim_buf_set_lines(0, 0, -1, false, { "typed in Neovim" })
-    t.answer(true) -- Save file?
-    t.keys("C-x #")
-    wait_for("emacsclient to exit", function() return t.eval([[(let ((p (get-process "client"))) (or (null p) (eq (process-status p) 'exit)))]]) == "t" end)
-    t.eq(t.read_file(msg), "typed in Neovim\n")
-    t.eq(shown(), { "client.org" })
+    for i = 1, 2 do
+      t.file("MSG.txt", "template " .. i .. "\n") -- as git writes it before each commit
+      t.eval(([[(start-process "client" nil "emacsclient" "-s" (expand-file-name server-name server-socket-dir) %q)]]):format(msg))
+      wait_for("the file", function() return api.nvim_buf_get_name(0) == msg end)
+      t.eq(vim.fn.maparg("<C-c>", "n") ~= "", true, "C-c goes to Emacs")
+      api.nvim_buf_set_lines(0, 0, -1, false, { "typed in Neovim " .. i })
+      t.command("ignore")
+      t.eq(t.eval(("(with-current-buffer (get-file-buffer %q) (bound-and-true-p nvb-test-visited))"):format(msg)), "t",
+        "Emacs's buffer kept its state")
+      t.answer(true) -- Save file?
+      t.keys("C-x #")
+      wait_for("emacsclient to exit", function() return t.eval([[(let ((p (get-process "client"))) (or (null p) (eq (process-status p) 'exit)))]]) == "t" end)
+      t.eq(t.read_file(msg), "typed in Neovim " .. i .. "\n")
+      t.eq(shown(), { "client.org" })
+    end
   end,
 
   ["nothing is pulled when Emacs is idle"] = function(t)
