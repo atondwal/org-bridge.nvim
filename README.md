@@ -140,7 +140,8 @@ With lualine, add `require("emacs").statusline` to a section. Quitting
 Neovim while a clock runs offers to clock out first.
 
 Neovim does all file writes. When Emacs saves (capture, `org-save-all-org-buffers`),
-the save goes through `:write`.
+the save goes through `:write`. Either way Emacs then runs `after-save-hook`,
+so saving a file with its conflicts resolved stages it, as in Emacs.
 
 What Emacs does on its own between commands (a timer, a process finishing,
 a file `emacsclient` opens) shows up in Neovim by itself, once you are in

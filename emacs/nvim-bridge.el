@@ -1410,10 +1410,16 @@ lines between its delimiters) without the blank lines after it."
     (set-buffer-modified-p (plist-get params :modified)))
   t)
 
+(defun nvb--saved ()
+  "What `basic-save-buffer' does once Neovim wrote the current buffer's
+file: staging a resolved conflict (vc-git), Magit's refresh."
+  (set-buffer-modified-p nil)
+  (set-visited-file-modtime)
+  (run-hooks 'after-save-hook))
+
 (defun nvb-rpc-saved (params)
   (with-current-buffer (nvb--buffer (plist-get params :id))
-    (set-buffer-modified-p nil)
-    (set-visited-file-modtime))
+    (nvb--saved))
   t)
 
 (defun nvb-rpc-close (params)
@@ -1857,8 +1863,7 @@ Like `basic-save-buffer', an indirect buffer saves its base buffer."
                                      :text text))
           (nvb--shadow-text text)
           (setq nvb--tick (buffer-chars-modified-tick)))
-        (set-buffer-modified-p nil)
-        (set-visited-file-modtime))))
+        (nvb--saved))))
   t)
 
 (defvar nvb--widths (make-hash-table :test #'equal)

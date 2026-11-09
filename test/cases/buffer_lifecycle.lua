@@ -235,4 +235,30 @@ return {
     t.eq(t.lines(), { "* DONE Call Bob" })
     agree(t, path)
   end,
+
+  -- As vc-git stages a resolved conflict on save. Emacs: C-x C-s runs
+  -- after-save-hook once the file is written; a hook's error is shown
+  -- after the save, the buffer unmodified.
+  [":w and C-x C-s run after-save-hook; a failing hook leaves the file saved"] = function(t)
+    local path = t.open("after_save.org", "* A\n")
+    t.eval([[(progn (setq nvb-test-saves 0)
+      (add-hook 'after-save-hook (lambda () (cl-incf nvb-test-saves) (setq nvb-test-saved (buffer-substring-no-properties 1 (point-max)))) nil t))]])
+    t.cursor(1)
+    t.feed("A!<Esc>")
+    vim.cmd("silent write")
+    t.eq(t.eval("nvb-test-saved"), '"* A!\n"', "the hook sees the text written")
+    t.answer("t")
+    t.keys("C-c C-t")
+    t.keys("C-x C-s")
+    t.eq(t.eval("nvb-test-saves"), "2")
+    t.eval([[(add-hook 'after-save-hook (lambda () (error "Hook failed")) nil t)]])
+    t.feed("A!<Esc>")
+    vim.cmd("messages clear")
+    -- An error message, which vim.cmd raises.
+    local _, err = pcall(vim.cmd, "silent write")
+    local shown = tostring(err) .. vim.fn.execute("messages")
+    assert(shown:find("Emacs: Hook failed", 1, true), shown)
+    t.eq(t.read_file(path), "* TODO A!!\n")
+    t.eq({ vim.bo.modified, t.eval("(buffer-modified-p)") }, { false, "nil" })
+  end,
 }

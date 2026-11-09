@@ -419,11 +419,18 @@ mirror.on_bind = function(buf)
   })
   api.nvim_create_autocmd("BufWritePost", {
     group = group, buffer = buf,
-    callback = function()
+    -- Emacs runs after-save-hook; its error is reported, the file saved.
+    callback = guarded(function()
       local id = mirror.id(buf)
       -- :w copy.org writes a copy and leaves the buffer modified.
       if id and rpc.depth == 0 and not vim.bo[buf].modified then rpc.call("saved", { id = id }) end
-    end,
+    end),
+  })
+  -- The hook reads the text written (vc-git stages a file with no conflict
+  -- markers left). Once the file is written, Emacs would refuse the edits
+  -- as changes to a file changed on disk.
+  api.nvim_create_autocmd("BufWritePre", {
+    group = group, buffer = buf, callback = guarded(mirror.sync),
   })
   api.nvim_create_autocmd("BufReadPost", {
     group = group, buffer = buf, callback = function() mirror.on_reload(buf) end,
