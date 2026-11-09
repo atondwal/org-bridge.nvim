@@ -865,10 +865,12 @@ local function layout()
     local buf = api.nvim_win_get_buf(w)
     local st = state[buf]
     local cur = api.nvim_win_get_cursor(w)
-    -- A file Emacs doesn't mirror is still a place to link to (capture's %a).
+    -- A file Emacs doesn't mirror is still a place to link to (capture's
+    -- %a), with its unsaved text.
     local file = not st and vim.bo[buf].buftype == "" and api.nvim_buf_get_name(buf) or ""
-    out[i] = { win = w, id = st and st.id, point = { cur[1] - 1, cur[2] },
-      file = vim.fn.filereadable(file) == 1 and file or nil,
+    file = vim.fn.filereadable(file) == 1 and file or nil
+    out[i] = { win = w, id = st and st.id, point = { cur[1] - 1, cur[2] }, file = file,
+      text = file and vim.bo[buf].modified and buf_text(buf) or nil,
       top = vim.fn.line("w0", w) - 1, height = api.nvim_win_get_height(w) }
     if w == api.nvim_get_current_win() then selected = i end
   end

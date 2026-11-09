@@ -832,8 +832,7 @@ Neovim's."
              :name (buffer-name)
              :file (nvb--visited-file)
              :mode (symbol-name major-mode)
-             ;; `nvb--visit' makes its buffers read-only for itself.
-             :readonly (nvb--bool (and buffer-read-only (not nvb--unmirrored)))
+             :readonly (nvb--bool buffer-read-only)
              ;; Neovim sends keys typed at a heading's start to Emacs then.
              :speed (nvb--bool (and (derived-mode-p 'org-mode)
                                     (bound-and-true-p org-use-speed-commands)))
@@ -879,10 +878,10 @@ mirror (a .txt file, say). Internal, so never reported to Neovim.")
 reuse, split or delete windows act on Neovim's layout. LAYOUT is a list of
 \(:win W :id ID :point P :top T :height H) in screen order, every field
 but :id always present; SELECTED is the 1-based index of
-Neovim's current window. A window with :file instead of :id shows a file
-Neovim doesn't mirror (see `nvb--visit'). Each window remembers W in its
-`nvb-win' parameter, which is how Neovim pairs the windows back up
-afterwards. An unchanged layout keeps its windows: commands hold on to
+Neovim's current window. A window with :file (and :text if unsaved)
+instead of :id shows a file Neovim doesn't mirror (see `nvb--visit').
+Each window remembers W in its `nvb-win' parameter, which is how Neovim
+pairs the windows back up afterwards. An unchanged layout keeps its windows: commands hold on to
 them between commands (`org-agenda-show-window' for SPC SPC)."
   (nvb--fit-frame layout)
   (let ((windows (if (nvb--windows-are-p layout)
@@ -892,7 +891,7 @@ them between commands (`org-agenda-show-window' for SPC SPC)."
              for w in layout
              for i from 1
              do (let ((buf (cond ((plist-get w :id) (nvb--buffer (plist-get w :id)))
-                                 ((plist-get w :file) (nvb--visit (plist-get w :file)))
+                                 ((plist-get w :file) (nvb--visit (plist-get w :file) (plist-get w :text)))
                                  (t (get-buffer-create nvb--placeholder)))))
                   (unless (eq (window-buffer win) buf) (set-window-buffer win buf))
                   (set-window-parameter win 'nvb-win (plist-get w :win))
@@ -946,16 +945,21 @@ heights, each with its mode line."
 (defvar-local nvb--unmirrored nil
   "Non-nil in a buffer `nvb--visit' opened for a file Neovim doesn't mirror.")
 
-(defun nvb--visit (file)
-  "FILE, read-only and current with the disk, for a Neovim window showing a
-file Emacs doesn't mirror: commands run from there (`org-store-link',
-capture's %a) need its buffer. Unsaved Neovim edits aren't in it."
+(defun nvb--visit (file text)
+  "FILE's buffer, for a Neovim window showing a file Emacs doesn't mirror:
+commands run from there (`org-store-link', capture's %a, Magit's blame)
+need it. It has Neovim's TEXT if Neovim has unsaved changes, else the
+disk's: a command that shows it has Neovim mirror it. Writable, as
+Neovim's files are, unless a mode makes it read-only (blame)."
   (let ((buf (find-file-noselect file t)))
     (with-current-buffer buf
-      (unless (verify-visited-file-modtime buf)
-        (revert-buffer t t t))
-      (setq buffer-read-only t
-            nvb--unmirrored t))
+      (unless nvb--unmirrored
+        (setq buffer-read-only nil
+              nvb--unmirrored t))
+      (cond (text (nvb--set-text buf text)
+                  (set-buffer-modified-p t))
+            ((or (buffer-modified-p) (not (verify-visited-file-modtime buf)))
+             (revert-buffer t t t))))
     buf))
 
 (defvar nvb--new-windows 0 "The last name given a window Emacs made (negative).")
@@ -1037,7 +1041,8 @@ instead of :id."
                   (find-file-noselect file t)
                 (get-buffer-create (plist-get params :name)))))
     (with-current-buffer buf
-      ;; `nvb--visit' may have opened it read-only before Neovim mirrored it.
+      ;; Neovim decides whether a file is writable (a read-only file's
+      ;; buffer is read-only in Emacs).
       (setq buffer-read-only nil
             nvb--unmirrored nil)
       ;; Only scratch buffers come with a :mode; a file's comes from its name.

@@ -11,6 +11,14 @@ local FACES = [[(progn
   (defface nvbt-heading '((t :background "#404040")) "")
   (defface nvbt-hash '((t :foreground "#ff0000")) ""))]]
 
+-- As magit-blame-read-only-mode: q in its keymap leaves it, and with it
+-- read-only, unless the buffer was read-only before.
+local VIEW_MODE = [[(define-minor-mode nvbt-view-mode "Read-only with q to leave."
+  :keymap `((,(kbd "q") . ,(lambda () (interactive) (nvbt-view-mode -1))))
+  (if nvbt-view-mode
+      (progn (setq-local nvbt-was-read-only buffer-read-only) (read-only-mode 1))
+    (unless nvbt-was-read-only (read-only-mode -1))))]]
+
 local function marks(row)
   return vim.tbl_map(function(m) return m[4] end,
     api.nvim_buf_get_extmarks(0, NS, { row, 0 }, { row, -1 }, { details = true }))
@@ -74,13 +82,9 @@ return {
     t.eq(hl(m.virt_text[1][2]).fg, 0xff0000)
   end,
 
-  -- As magit-blame-read-only-mode: q in its keymap leaves it, and with it
-  -- read-only.
   ["a file a mode makes read-only takes its keys, and is edited again after"] = function(t)
     local path = t.open("view.org", "* A\n| a |\n")
-    t.eval([[(define-minor-mode nvbt-view-mode "Read-only with q to leave."
-      :keymap `((,(kbd "q") . ,(lambda () (interactive) (nvbt-view-mode -1))))
-      (setq buffer-read-only nvbt-view-mode))]])
+    t.eval(VIEW_MODE)
     t.command("nvbt-view-mode")
     t.eq({ vim.bo.modifiable, mirror.state[api.nvim_get_current_buf()].kind }, { false, "menu" })
     t.feed("q")
@@ -102,6 +106,31 @@ return {
     t.command("nvbt-show")
     t.eq({ mirror.state[api.nvim_get_current_buf()] ~= nil, vim.bo.modifiable }, { true, true })
     t.eq(vim.fn.maparg("<C-c>", "n"), "", "C-c is Vim's")
+  end,
+
+  -- As blame from a .txt (:Emacs C-c M-g b): Emacs visits the file
+  -- Neovim shows, and the mode makes it read-only.
+  ["a .txt file a mode makes read-only takes its keys, and is edited again after"] = function(t)
+    t.open("view.txt", "text\n")
+    t.eval(VIEW_MODE)
+    t.eval([[(defun nvbt-view-here () (interactive) (set-window-buffer nil (current-buffer)) (nvbt-view-mode))]])
+    t.command("nvbt-view-here")
+    local st = mirror.state[api.nvim_get_current_buf()]
+    t.eq({ vim.bo.modifiable, st.kind }, { false, "menu" })
+    t.feed("q")
+    t.eq({ vim.bo.modifiable, st.kind }, { true, "edit" })
+  end,
+
+  ["a .txt file a command shows keeps its unsaved changes"] = function(t)
+    t.open("shown.org", "* A\n")
+    vim.cmd("split")
+    t.open("unsaved.txt", "text\n")
+    api.nvim_buf_set_lines(0, 0, -1, false, { "typed" })
+    local txt = api.nvim_get_current_buf()
+    vim.cmd("wincmd j")
+    -- Any command: the .txt's window is in Emacs's layout, so shown.
+    t.command("ignore")
+    t.eq({ mirror.state[txt] ~= nil, t.lines(txt), vim.bo[txt].modified }, { true, { "typed" }, true })
   end,
 
   -- As smerge-mode in a conflicted file Magit visits: C-c ^ u keeps
