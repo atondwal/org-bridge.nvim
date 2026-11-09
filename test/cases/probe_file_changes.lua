@@ -114,6 +114,22 @@ return {
     agree(t, path)
   end,
 
+  -- Neovim reloads its own files; one only the agenda read is Emacs's to.
+  ["an agenda file only Emacs has open reloads when it changes on disk"] = function(t)
+    local b = t.file("agenda_only.org", "* TODO Pay rent\n* TODO Read book\n")
+    t.eval(([[(setq org-agenda-files (list %q))]]):format(b))
+    t.answer("t")
+    t.command("org-agenda")
+    write_behind(b, "* TODO Pay rent\n* TODO New from git\n* TODO Read book\n")
+    api.nvim_feedkeys("r", "x", false)
+    assert(t.find_line("New from git"), "agenda rebuilt from the disk:\n" .. table.concat(t.lines(), "\n"))
+    t.cursor(t.find_line("Read book"))
+    t.answer("d")
+    api.nvim_feedkeys("t", "x", false)
+    t.eq(t.lines(vim.fn.bufnr(b)), { "* TODO Pay rent", "* TODO New from git", "* DONE Read book" },
+      "the edit is made to the disk's text")
+  end,
+
   [":e! drops synced and unsynced Neovim edits on both sides"] = function(t)
     local path = t.open("e_bang.org", t.DOC)
     api.nvim_buf_set_lines(0, 0, 1, false, { "* A synced" })

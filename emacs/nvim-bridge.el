@@ -1218,6 +1218,17 @@ defined it: binding it void would discard the defcustom loading sets."
 
 (defvar nvb--kill-sent nil "The kill-ring entry Neovim last received.")
 
+(defun nvb--reload-changed-files ()
+  "Reload unmodified files Neovim doesn't mirror that changed on disk (git).
+Neovim reloads its own (:checktime), but org reuses the buffers of files
+only Emacs opened (agenda files) without checking the disk."
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when (and buffer-file-name (not nvb--id) (not (buffer-modified-p))
+                 (file-exists-p buffer-file-name)
+                 (not (verify-visited-file-modtime buf)))
+        (revert-buffer t t t)))))
+
 (cl-defun nvb-rpc-exec (params)
   "Run a command in buffer ID at POINT, then report the new state.
 PARAMS has either :keys (kbd notation) or :command (a command name), and
@@ -1225,6 +1236,7 @@ PARAMS has either :keys (kbd notation) or :command (a command name), and
   ;; Neovim sent its windows before taking a change Emacs made on its own
   ;; (a window emacsclient opened): applying them would close that window.
   (when nvb--unpulled (cl-return-from nvb-rpc-exec (list :stale t)))
+  (nvb--reload-changed-files)
   (nvb--apply-syncs (plist-get params :syncs))
   ;; Neovim's latest yank, so C-y and C-c C-x C-y paste what p would.
   (when (plist-get params :kill)
