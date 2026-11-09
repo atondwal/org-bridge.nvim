@@ -1266,17 +1266,24 @@ rpc.handlers.save = function(p)
   return true
 end
 
--- Emacs is gone: forget every binding and the folds it produced.
+-- Emacs is gone: forget every binding and the folds it produced. Its own
+-- buffers (Magit's, the agenda) went with it.
 function M.reset()
+  local dead = {}
   for buf, st in pairs(state) do
-    refold[buf] = st.folds
-    for _, w in ipairs(vim.fn.win_findbuf(buf)) do
-      api.nvim_win_call(w, function() vim.cmd("silent! normal! zE") end)
+    if st.special then
+      dead[#dead + 1] = buf
+    else
+      refold[buf] = st.folds
+      for _, w in ipairs(vim.fn.win_findbuf(buf)) do
+        api.nvim_win_call(w, function() vim.cmd("silent! normal! zE") end)
+      end
     end
     unbind(buf)
   end
   -- The next Emacs numbers its windows afresh.
   made, reported, changed = {}, {}, false
+  for _, buf in ipairs(dead) do api.nvim_buf_delete(buf, { force = true }) end
 end
 
 -- Neovim reloaded buf from disk (:e!): Emacs's old folds no longer apply.

@@ -117,6 +117,24 @@ return {
     t.eq(tostring(err), "org-bridge.nvim: Emacs exited", "the error says what happened")
   end,
 
+  -- Emacs's own buffers (Magit's) die with it; the next Emacs's buffer of
+  -- the same name must show, and no key may run in a dead one.
+  ["a dead Emacs's buffers go, and the next one shows its own of the same name"] = function(t)
+    t.open("dead_buffers.org", t.DOC)
+    local function show()
+      t.eval([[(defun nvb-test-show () (interactive)
+        (with-current-buffer (get-buffer-create "nvb-test-out") (insert "one\n"))
+        (pop-to-buffer "nvb-test-out"))]])
+      t.command("nvb-test-show")
+    end
+    show()
+    t.eq(api.nvim_buf_get_name(0), "emacs://nvb-test-out")
+    kill_emacs(t)
+    t.eq(vim.fn.bufexists("emacs://nvb-test-out"), 0, "gone")
+    show()
+    t.eq({ api.nvim_buf_get_name(0), t.lines() }, { "emacs://nvb-test-out", { "one" } })
+  end,
+
   -- (kill-emacs) from :EmacsEval is Emacs exiting on its own.
   [":EmacsEval (kill-emacs) reports the exit and the next key restarts"] = function(t)
     vim.cmd("runtime plugin/emacs.lua")
