@@ -152,6 +152,24 @@ return {
     t.eq(#vim.api.nvim_tabpage_list_wins(0), before)
   end,
 
+  -- As ediff's control panel: a selected window dedicated to its buffer.
+  -- Neovim's windows win; commands keep working after it closes.
+  ["a window Emacs dedicated to its buffer doesn't block later commands"] = function(t)
+    t.open("dedicated.org", "* A\nbody\n")
+    t.eval([[(defun nvb-test-panel () (interactive)
+      (select-window (split-window-below))
+      (switch-to-buffer (get-buffer-create "*panel*"))
+      (set-window-dedicated-p nil t))]])
+    t.after(function() t.eval("(progn (fmakunbound 'nvb-test-panel) (kill-buffer \"*panel*\"))") end)
+    t.command("nvb-test-panel")
+    t.eq(vim.fn.bufname(), "emacs://*panel*")
+    t.command("ignore")
+    vim.cmd("only | buffer dedicated.org")
+    t.cursor(1)
+    t.keys("TAB")
+    t.eq(t.folds(), { "1-2" })
+  end,
+
   -- Another org plugin whose FileType handler fails stops the rest.
   ["a buffer whose FileType handlers never ran attaches when shown"] = function(t)
     vim.o.eventignore = "FileType"

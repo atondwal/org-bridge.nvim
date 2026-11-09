@@ -896,7 +896,7 @@ them between commands (`org-agenda-show-window' for SPC SPC)."
              do (let ((buf (cond ((plist-get w :id) (nvb--buffer (plist-get w :id)))
                                  ((plist-get w :file) (nvb--visit (plist-get w :file)))
                                  (t (get-buffer-create nvb--placeholder)))))
-                  (unless (eq (window-buffer win) buf) (set-window-buffer win buf))
+                  (nvb--show win buf)
                   (set-window-parameter win 'nvb-win (plist-get w :win))
                   (nvb--resize win (plist-get w :height))
                   (set-window-start win (with-current-buffer buf (nvb--pos (list (plist-get w :top) 0))) t)
@@ -904,6 +904,14 @@ them between commands (`org-agenda-show-window' for SPC SPC)."
                   (unless (and (eql i selected) (plist-get w :id))
                     (set-window-point win (with-current-buffer buf (nvb--pos (plist-get w :point)))))))
     (select-window (or (and selected (nth (1- selected) windows)) (frame-first-window)))))
+
+(defun nvb--show (win buf)
+  "Show BUF in WIN as Neovim's window does. Neovim's windows are the
+layout, so one Emacs dedicated to its buffer (ediff's control panel)
+gives way too."
+  (unless (eq (window-buffer win) buf)
+    (set-window-dedicated-p win nil)
+    (set-window-buffer win buf)))
 
 (defun nvb--fit-frame (layout)
   "Grow the batch frame (24 rows) to hold LAYOUT's windows at Neovim's
@@ -1217,8 +1225,7 @@ PARAMS has either :keys (kbd notation) or :command (a command name), and
          (want nil)
          (marks nil))
     (nvb--apply-layout (plist-get params :layout) (plist-get params :selected))
-    (unless (eq (window-buffer) buf)
-      (set-window-buffer (selected-window) buf))
+    (nvb--show (selected-window) buf)
     (nvb--reveal buf (plist-get params :revealed))
     (when (plist-get params :point)
       (setq want (nvb--pos (plist-get params :point)))
