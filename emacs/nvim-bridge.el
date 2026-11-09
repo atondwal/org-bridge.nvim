@@ -177,6 +177,10 @@ count (magit-blame's headings)."
                 (seq-filter #'buffer-live-p
                             (append (nvb--displayed-buffers) (hash-table-values nvb--mirrors))))))
 
+(defun nvb--report-error (data context _signal)
+  "Show an error nothing handled, as the command loop does, and carry on."
+  (message "%s%s" context (error-message-string data)))
+
 (defun nvb-serve (socket)
   "Listen on SOCKET and serve one Neovim client until it disconnects."
   (when (file-exists-p socket) (delete-file socket))
@@ -186,6 +190,9 @@ count (magit-blame's headings)."
   ;; a 20k-line file; at the default threshold a collection (~100 ms with
   ;; several big files loaded) would follow nearly every key.
   (setq gc-cons-threshold nvb--gc-cons-threshold)
+  ;; A process filter or sentinel that signals (C-g at a prompt Magit's
+  ;; filter shows) goes here; batch Emacs's default exits.
+  (setq command-error-function #'nvb--report-error)
   (make-network-process
    :name "nvim-bridge" :server t :family 'local :service socket
    :coding 'utf-8-unix
@@ -198,7 +205,10 @@ count (magit-blame's headings)."
   (while t
     (let ((before (nvb--signature)))
       ;; Waiting on any process adds ~10ms per message; wait on the client.
-      (accept-process-output nvb--conn nvb--idle-check-seconds)
+      (condition-case err
+          (accept-process-output nvb--conn nvb--idle-check-seconds)
+        ;; A timer's quit (timers report their own errors).
+        ((error quit) (nvb--report-error err "" nil)))
       ;; Timers, other processes' output and their sentinels (git exiting
       ;; for Magit, emacsclient opening a commit message) ran meanwhile.
       ;; If they changed anything, Neovim asks for the state
@@ -1703,13 +1713,23 @@ completing-read-multiple (org tags) sets its table buffer-locally from
     (when (and sym (not (string-empty-p answer)))
       (add-to-history sym answer))))
 
-(defun nvb--read-from-minibuffer (prompt &optional initial _keymap read hist default &rest _)
+(defun nvb--ask-minibuffer (map method params)
+  "`nvb--request' for a minibuffer prompt using keymap MAP. On a quit, run
+MAP's C-g first, as C-g there would (Magit's kills the process asking)."
+  (condition-case nil
+      (nvb--request method params)
+    (quit
+     ;; Usually `abort-minibuffers', which refuses outside a minibuffer.
+     (ignore-errors (call-interactively (lookup-key map [?\C-g])))
+     (signal 'quit nil))))
+
+(defun nvb--read-from-minibuffer (prompt &optional initial keymap read hist default &rest _)
   (let* ((init (nvb--first initial))
          (def (nvb--first default))
          (nvb--minibuffer-depth 1)
          (nvb--completion (nvb--minibuffer-completion))
          (s (unwind-protect
-                (nvb--request "read_string"
+                (nvb--ask-minibuffer (or keymap minibuffer-local-map) "read_string"
                               (append (list :prompt (nvb--prompt-string prompt)
                                             :initial init
                                             :default def
@@ -1794,16 +1814,17 @@ an exact match in COLLECTION; else nil."
     (expand-file-name s dir)))
 
 (defun nvb--y-or-n-p (prompt)
-  (nvb--request "confirm" (list :prompt (nvb--prompt-string prompt))))
+  (nvb--ask-minibuffer y-or-n-p-map "confirm" (list :prompt (nvb--prompt-string prompt))))
 
 (defun nvb--yes-or-no-p (prompt)
   "Answered by typing yes or no, as in Emacs: these guard risky actions.
 With `use-short-answers', y or n, as Emacs then asks."
-  (nvb--request "confirm" (list :prompt (nvb--prompt-string prompt)
-                                :typed (nvb--bool (not use-short-answers)))))
+  (nvb--ask-minibuffer minibuffer-local-map "confirm"
+                       (list :prompt (nvb--prompt-string prompt)
+                             :typed (nvb--bool (not use-short-answers)))))
 
 (defun nvb--read-passwd (prompt &rest _)
-  (nvb--request "read_string" (list :prompt (nvb--prompt-string prompt) :secret t)))
+  (nvb--ask-minibuffer read-passwd-map "read_string" (list :prompt (nvb--prompt-string prompt) :secret t)))
 
 (defun nvb--visited-file ()
   "The file the current buffer visits. Org's edit buffers (footnotes via

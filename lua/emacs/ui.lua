@@ -103,17 +103,35 @@ local function swap_history(items)
   end
 end
 
--- vim.fn.input where C-g cancels too, as Emacs users press by reflex, and
--- Up/Down walk Emacs's history for this prompt (stored links, say).
-local function input(opts, history)
+-- read(arg) where C-g cancels the command line too, as Emacs users press
+-- by reflex.
+local function with_cg(read, arg)
   local own = vim.fn.maparg("<C-g>", "c") == ""
   if own then vim.keymap.set("c", "<C-g>", "<C-c>") end
-  local restore = swap_history(history or {})
-  local ok, s = pcall(vim.fn.input, opts)
-  restore()
+  local ok, s = pcall(read, arg)
   if own then vim.keymap.del("c", "<C-g>") end
   if not ok then error(s, 0) end
   return s
+end
+
+-- vim.fn.input where C-g cancels too, and Up/Down walk Emacs's history for
+-- this prompt (stored links, say).
+local function input(opts, history)
+  local restore = swap_history(history or {})
+  local ok, s = pcall(with_cg, vim.fn.input, opts)
+  restore()
+  if not ok then error(s, 0) end
+  return s
+end
+
+-- vim.fn.inputsecret, cancelled as `input`: it has no cancelreturn, so a
+-- cancel shows only as the command line's abort.
+local function inputsecret(prompt)
+  local aborted
+  vim.api.nvim_create_autocmd("CmdlineLeave", { once = true,
+    callback = function() aborted = vim.v.event.abort end })
+  local s = with_cg(vim.fn.inputsecret, prompt)
+  return aborted and CANCELLED or s
 end
 
 local CALENDAR_NS = vim.api.nvim_create_namespace("emacs_calendar")
@@ -258,7 +276,7 @@ rpc.handlers.read_string = function(p)
     completion = p.completion }
   local s
   if p.secret then
-    s = vim.fn.inputsecret(p.prompt)
+    s = inputsecret(p.prompt)
   else
     local close = p.date and date_preview(p.prompt)
     local ok, res = pcall(input, opts, p.history)

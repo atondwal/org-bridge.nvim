@@ -245,4 +245,40 @@ return {
     t.eq(t.lines()[5], "* YB", "the insertion stays")
     agree(t, path)
   end,
+
+  -- As Magit asks for git's password: a process filter reads the answer
+  -- with a C-g that kills the process. Emacs: C-g kills it and says
+  -- "error in process filter: Quit"; Emacs carries on.
+  ["Escape at a prompt from a process filter runs the prompt's C-g, and Emacs carries on"] = function(t)
+    t.open("filter_prompt.org", t.DOC)
+    local pid = emacs_pid(t)
+    t.answer(t.QUIT)
+    t.eval([[(make-process :name "asker" :command '("sh" "-c" "echo Password:; sleep 30")
+      :filter (lambda (proc _out)
+                (let ((minibuffer-local-map
+                       (define-keymap :parent minibuffer-local-map
+                         "C-g" (lambda () (interactive) (kill-process proc)))))
+                  (process-send-string proc (read-string "Password: ")))))]])
+    assert(vim.wait(5000, function() return t.eval([[(get-process "asker")]]) == "nil" end, 50),
+      "the process is killed")
+    t.eq(t.asked()[1].params.prompt, "Password: ")
+    t.eq(emacs_pid(t), pid, "same Emacs")
+  end,
+
+  -- Emacs: each is reported in the echo area and Emacs carries on.
+  ["an error in a process filter or sentinel, or a quit in a timer, leaves Emacs running"] = function(t)
+    t.open("stray_errors.org", t.DOC)
+    local pid = emacs_pid(t)
+    vim.cmd("messages clear")
+    t.eval([[(progn
+      (make-process :name "filter" :command '("echo" "out") :filter (lambda (_p _o) (error "Filter failed")))
+      (make-process :name "sentinel" :command '("true") :sentinel (lambda (_p _e) (error "Sentinel failed")))
+      (run-at-time 0.1 nil (lambda () (signal 'quit nil))))]])
+    vim.wait(1000)
+    t.eq(emacs_pid(t), pid, "same Emacs")
+    local seen = table.concat(messages(), "\n")
+    for _, m in ipairs({ "error in process filter: Filter failed", "error in process sentinel: Sentinel failed", "Quit" }) do
+      assert(seen:find(m, 1, true), m .. " in " .. seen)
+    end
+  end,
 }

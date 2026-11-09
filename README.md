@@ -154,7 +154,8 @@ Magit's keys go to Emacs. Its menus (`c`, `l`, `b`: transients) show in a
 float, and the keys you type go to the menu until a key closes it, as in
 Emacs: `-a` toggles a switch, `c` runs a command, `q` says "Unbound
 suffix", `<C-g>` or `<Esc>` closes it. The status refreshes by itself when
-git finishes. `c c` opens the commit message below the diff: type it in
+git finishes. When git asks for a username or password, `<Esc>` or `<C-g>`
+at the prompt stops git, as `C-g` does in Emacs. `c c` opens the commit message below the diff: type it in
 Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels. The log's
 author and date, which Magit draws in the right margin, show at the
 window's right edge; blame's headings are lines above each chunk.

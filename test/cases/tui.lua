@@ -143,6 +143,20 @@ return {
     t.eq(api.nvim_win_text_height(0, { start_row = 1, end_row = 1 }).all, 1, "screen lines")
   end,
 
+  -- Emacs: C-g at read-passwd quits; Neovim's Escape cancels as at other prompts.
+  ["Escape and C-g cancel a password prompt; RET answers"] = function(t)
+    t.open("passwd.org", "* A\n")
+    t.eval([[(defun nvb-test-passwd () (interactive) (insert (read-passwd "Password: ")))]])
+    t.after(function() t.eval("(fmakunbound 'nvb-test-passwd)") end)
+    with_real_ui({}, function()
+      for _, keys in ipairs({ "pw<Esc>", "pw<C-g>", "pw<CR>" }) do
+        api.nvim_feedkeys(api.nvim_replace_termcodes(keys, true, false, true), "t", false)
+        t.command("nvb-test-passwd")
+      end
+    end)
+    t.eq(t.lines(), { "pw* A" })
+  end,
+
   ["Neovim's own org syntax doesn't add attributes under Emacs faces"] = function(t)
     vim.cmd("syntax on")
     t.open("syntax.org", "* Heading\n")
