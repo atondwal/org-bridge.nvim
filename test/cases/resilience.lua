@@ -298,16 +298,21 @@ return {
   ["an error in a process filter or sentinel, or a quit in a timer, leaves Emacs running"] = function(t)
     t.open("stray_errors.org", t.DOC)
     local pid = emacs_pid(t)
-    vim.cmd("messages clear")
+    -- Read from Emacs's log: the filter may run during the eval, whose
+    -- reply shows only its last message.
+    local function logged(m)
+      return t.eval([[(with-current-buffer "*Messages*" (buffer-string))]]):find(m, 1, true) ~= nil
+    end
     t.eval([[(progn
       (make-process :name "filter" :command '("echo" "out") :filter (lambda (_p _o) (error "Filter failed")))
-      (make-process :name "sentinel" :command '("true") :sentinel (lambda (_p _e) (error "Sentinel failed")))
-      (run-at-time 0.1 nil (lambda () (signal 'quit nil))))]])
-    vim.wait(1000)
-    t.eq(emacs_pid(t), pid, "same Emacs")
-    local seen = table.concat(messages(), "\n")
-    for _, m in ipairs({ "error in process filter: Filter failed", "error in process sentinel: Sentinel failed", "Quit" }) do
-      assert(seen:find(m, 1, true), m .. " in " .. seen)
+      (make-process :name "sentinel" :command '("true") :sentinel (lambda (_p _e) (error "Sentinel failed"))))]])
+    for _, m in ipairs({ "error in process filter: Filter failed", "error in process sentinel: Sentinel failed" }) do
+      assert(vim.wait(5000, function() return logged(m) end, 50), m)
     end
+    -- While Emacs waits for Neovim, not during a request (which it would quit).
+    t.eval("(run-at-time 0.1 nil (lambda () (signal 'quit nil)))")
+    vim.wait(500)
+    t.eq(logged("Quit"), true, "the timer's quit")
+    t.eq(emacs_pid(t), pid, "same Emacs")
   end,
 }
