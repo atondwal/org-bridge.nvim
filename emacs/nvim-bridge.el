@@ -210,8 +210,9 @@ count (magit-blame's headings)."
       ;; Waiting on any process adds ~10ms per message; wait on the client.
       (condition-case err
           (accept-process-output nvb--conn nvb--idle-check-seconds)
-        ;; A timer's quit (timers report their own errors).
-        ((error quit) (nvb--report-error err "" nil)))
+        ;; A timer's quit: timers report their own errors, and filters'
+        ;; and sentinels' go through `command-error-function'.
+        (quit (nvb--report-error err "" nil)))
       ;; Timers, other processes' output and their sentinels (git exiting
       ;; for Magit, emacsclient opening a commit message) ran meanwhile.
       ;; If they changed anything, Neovim asks for the state
