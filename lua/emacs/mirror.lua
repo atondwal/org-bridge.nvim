@@ -1156,10 +1156,12 @@ run = function(opts)
   delivered()
   -- A jump in Emacs (org-goto, a link): <C-o> comes back here.
   if res.jumped then vim.cmd("normal! m'") end
+  -- Before apply_state, whose calls take messages Emacs printed since (git
+  -- finishing): those are newer.
+  report(res)
   apply_state(res, params.layout, opts.join_undo)
   if res.region then show_region(res.region) end
   after_last = snapshot()
-  report(res)
   vim.cmd("redrawstatus!")
 end
 

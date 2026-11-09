@@ -133,6 +133,19 @@ return {
     end
   end,
 
+  -- Magit: "Running git push", then git's error from the sentinel.
+  ["a message Emacs prints right after a command shows after the command's own"] = function(t)
+    t.open("message_order.org", "* A\n")
+    t.eval([[(defun nvb-test-messages () (interactive)
+      (message "first")
+      (run-at-time 0 nil (lambda () (message "second"))))]])
+    vim.cmd("messages clear")
+    t.command("nvb-test-messages")
+    vim.wait(300)
+    local messages = vim.split(vim.fn.execute("messages"), "\n", { trimempty = true })
+    t.eq(vim.list_slice(messages, #messages - 1), { "first", "second" })
+  end,
+
   ["nothing is pulled when Emacs is idle"] = function(t)
     t.open("idle.org", "* A\n")
     t.command("ignore")
