@@ -1143,6 +1143,7 @@ run = function(opts)
   -- Emacs lays the agenda out for its window, which reorganize-frame makes
   -- full width.
   params.width = vim.o.columns
+  params.cwd = vim.fn.getcwd()
   local delivered
   params.syncs, delivered = collect_syncs()
   params.layout, params.selected = layout()

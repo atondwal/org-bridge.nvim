@@ -1208,8 +1208,11 @@ PARAMS has either :keys (kbd notation) or :command (a command name), and
   (let* ((buf (if (plist-get params :id)
                   (nvb--buffer (plist-get params :id))
                 ;; Neovim's current buffer has no mirror (e.g. :EmacsAgenda from a
-                ;; .txt file): run from the placeholder Neovim never sees.
-                (get-buffer-create nvb--placeholder)))
+                ;; .txt file): run from the placeholder Neovim never sees, in
+                ;; Neovim's current directory (magit-status finds the repo there).
+                (with-current-buffer (get-buffer-create nvb--placeholder)
+                  (setq default-directory (file-name-as-directory (plist-get params :cwd)))
+                  (current-buffer))))
          (err nil)
          (want nil)
          (marks nil))

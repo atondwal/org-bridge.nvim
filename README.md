@@ -149,7 +149,8 @@ Normal mode.
 ## Magit
 
 Magit isn't a dependency, but works when your `init` loads it.
-`:EmacsCommand magit-status` opens the status buffer in a split, where
+`:EmacsCommand magit-status` opens the status of the current file's
+repository (from a buffer with no file, `:pwd`'s) in a split, where
 Magit's keys go to Emacs. Its menus (`c`, `l`, `b`: transients) show in a
 float, and the keys you type go to the menu until a key closes it, as in
 Emacs: `-a` toggles a switch, `c` runs a command, `q` says "Unbound

@@ -392,4 +392,18 @@ return {
     t.eval("1")
     assert(t.read_file(log):find("== starting", 1, true), "log file has the start line")
   end,
+
+  -- Emacs: M-x runs in the current buffer's directory; an empty Neovim
+  -- buffer's is :pwd, which :cd changes after Emacs started.
+  [":EmacsCommand from a buffer with no file runs in Neovim's current directory"] = function(t)
+    local old = vim.fn.getcwd()
+    t.after(function() vim.cmd("cd " .. vim.fn.fnameescape(old)) end)
+    t.open("api_cwd.org", t.DOC)
+    vim.fn.mkdir(t.WORK .. "/elsewhere", "p")
+    vim.cmd("enew | cd " .. vim.fn.fnameescape(t.WORK .. "/elsewhere"))
+    t.eval([[(defun nvb-test-dir () (interactive) (setq nvb-test-dir default-directory))]])
+    t.after(function() t.eval("(fmakunbound 'nvb-test-dir)") end)
+    t.command("nvb-test-dir")
+    t.eq(t.eval("nvb-test-dir"), ('"%s/"'):format(vim.fn.getcwd()))
+  end,
 }
