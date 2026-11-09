@@ -375,9 +375,11 @@ local function install_keys(buf, kind)
   end
   -- A file of another type Emacs shows (a link to a .txt) stays in sync
   -- but keeps Neovim's keys, unless Emacs edits it for emacsclient or has
-  -- it read-only (blame).
+  -- it read-only (blame); C-c goes to Emacs while a minor mode binds keys
+  -- under it there (smerge-mode).
   local st = mirror.state[buf]
   if not st.special and not st.server and kind == "edit" and not vim.tbl_contains(mirror.config.filetypes, vim.bo[buf].filetype) then
+    if st.minor_c_c then map(buf, "n", "<C-c>", key_handler("<C-c>", "n")) end
     return
   end
   -- Org's messages say "press C-u C-c C-c".

@@ -592,8 +592,8 @@ local function apply_buffer(s, join_undo)
   -- take keys the way Emacs does.
   local kind = (s.readonly or s.columns) and "menu" or "edit"
   local keys_sig = table.concat(s.keys)
-  if st.kind ~= kind or (kind == "menu" and st.keys_sig ~= keys_sig) then
-    st.kind, st.keys, st.keys_sig = kind, s.keys, keys_sig
+  if st.kind ~= kind or (kind == "menu" and st.keys_sig ~= keys_sig) or st.minor_c_c ~= s.minor_c_c then
+    st.kind, st.keys, st.keys_sig, st.minor_c_c = kind, s.keys, keys_sig, s.minor_c_c
     M.on_kind(buf, kind)
   end
   -- Only on a change: the user's own :set nomodifiable stays.

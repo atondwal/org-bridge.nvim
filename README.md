@@ -161,7 +161,10 @@ that drops unsaved changes (`:q!`, `ZQ`, `:bd!`) cancels; `:w` alone just
 saves. The rebase todo works the same way; any other file `emacsclient`
 opens is done with what you last wrote. The log's
 author and date, which Magit draws in the right margin, show at the
-window's right edge; blame's headings are lines above each chunk.
+window's right edge; blame's headings are lines above each chunk. A file
+that isn't org keeps Vim's keys, but `<C-c>` goes to Emacs while a minor
+mode there binds keys under it, as smerge-mode does in a conflicted file
+(`<C-c>^u` keeps the upper side).
 
 For Vim keys, turn on evil in Magit buffers only, with evil-collection's
 bindings. Neovim keeps the keys evil binds as Vim does (`gg`, `v`, `$`)

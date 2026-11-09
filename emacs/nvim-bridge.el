@@ -846,6 +846,12 @@ Neovim's."
              ;; A file Emacs edits for emacsclient (Magit's commit message)
              ;; takes Emacs's keys (C-c C-c) whatever its type.
              :server (nvb--bool (bound-and-true-p server-buffer-clients))
+             ;; And a file of another type takes C-c while a minor mode on
+             ;; there binds keys under it (smerge-mode's C-c ^).
+             :minor_c_c (nvb--bool (cl-some (lambda (m)
+                                              (and (local-variable-p (car m)) (symbol-value (car m))
+                                                   (keymapp (lookup-key (cdr m) (kbd "C-c")))))
+                                            minor-mode-map-alist))
              :keys (nvb--bound-keys buf)
              ;; Evil has a Visual state here: those keys act on Neovim's selection.
              :visual (nvb--bool (bound-and-true-p evil-local-mode))

@@ -101,5 +101,24 @@ return {
     t.eval([[(defun nvbt-show () (interactive) (set-window-buffer nil (current-buffer)))]])
     t.command("nvbt-show")
     t.eq({ mirror.state[api.nvim_get_current_buf()] ~= nil, vim.bo.modifiable }, { true, true })
+    t.eq(vim.fn.maparg("<C-c>", "n"), "", "C-c is Vim's")
+  end,
+
+  -- As smerge-mode in a conflicted file Magit visits: C-c ^ u keeps
+  -- "upper" and the mode turns itself off with no conflict left.
+  ["C-c goes to Emacs in a .txt file while a minor mode binds keys under it"] = function(t)
+    local path = t.file("merge.txt", "<<<<<<< a\nupper\n=======\nlower\n>>>>>>> b\n")
+    t.open("merge_from.org", "* A\n")
+    t.eval(([[(progn
+      (define-minor-mode nvbt-merge-mode "C-c ^ u keeps the upper side."
+        :keymap `((,(kbd "C-c ^ u") . ,(lambda () (interactive)
+                                          (erase-buffer) (insert "upper\n") (nvbt-merge-mode -1)))))
+      (defun nvbt-merge () (interactive) (find-file %q) (nvbt-merge-mode)))]]):format(path))
+    t.command("nvbt-merge")
+    t.eq(api.nvim_buf_get_name(0), path)
+    t.answer("^", "u")
+    t.feed("<C-c>")
+    t.eq(t.lines(), { "upper" })
+    t.eq(vim.fn.maparg("<C-c>", "n"), "", "C-c is Vim's again")
   end,
 }
