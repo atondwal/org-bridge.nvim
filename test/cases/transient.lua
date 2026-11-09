@@ -13,9 +13,12 @@ local MENU = [[
   (transient-define-suffix nvbt-open ()
     (interactive)
     (pop-to-buffer-same-window (get-buffer-create "nvbt-log")))
+  (transient-define-suffix nvbt-fail ()
+    (interactive)
+    (error "Boom"))
   (transient-define-prefix nvbt-menu ()
-    ["Arguments" ("-a" "All" "--all") ("-e" "Empty" "--allow-empty")]
-    ["Actions" ("c" "Run" nvbt-run) ("l" "Log" nvbt-open)])
+    ["Arguments" ("-a" "All" "--all") ("-e" "Empty" "--allow-empty") ("-m" "Message" "--msg=")]
+    ["Actions" ("c" "Run" nvbt-run) ("l" "Log" nvbt-open) ("x" "Fail" nvbt-fail)])
   (setq nvbt-args :unset))]]
 
 local function open_menu(t)
@@ -64,6 +67,26 @@ return {
     assert(prompts(t)[2]:find("Unbound suffix: ‘q’", 1, true), prompts(t)[2])
     t.eq(t.lines(), { "* A" }, "text")
     t.eq(after_menu(t), { 1, "1", "nil" }, "windows, menu")
+  end,
+
+  -- Transient takes its keymap back in minibuffer-exit-hook.
+  ["an option's value is read, then the menu reads the next key"] = function(t)
+    open_menu(t)
+    t.answer("-", "m", "hello", "c")
+    t.command("nvbt-menu")
+    t.eq(t.eval("nvbt-args"), [[("--msg=hello")]], "suffix's args")
+    t.eq(after_menu(t), { 1, "1", "nil" }, "windows, menu")
+  end,
+
+  -- The command loop runs post-command-hook after an error; transient exits there.
+  ["a suffix's error closes its menu, and the next menu still opens"] = function(t)
+    open_menu(t)
+    t.answer("x")
+    t.command("nvbt-menu")
+    t.eq(after_menu(t), { 1, "1", "nil" }, "windows, menu after the error")
+    t.answer("c")
+    t.command("nvbt-menu")
+    t.eq(t.eval("nvbt-args"), "nil", "the second menu's suffix ran")
   end,
 
   ["Escape closes the menu"] = function(t)

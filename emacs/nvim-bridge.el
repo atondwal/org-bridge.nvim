@@ -1059,8 +1059,11 @@ until a key closes it. Each key is read with the menu shown."
       (setq last-command nvb--last-command)
       (condition-case e
           (nvb--run-command (or (key-binding keys t) #'undefined) keys nil)
-        ;; Reported as the command loop does, and the menu stays up.
-        ((debug error quit) (message "%s" (error-message-string e)))))))
+        ;; Reported as the command loop does, which runs
+        ;; post-command-hook after an error too (transient exits there).
+        ((debug error quit)
+         (message "%s" (error-message-string e))
+         (run-hooks 'post-command-hook))))))
 
 (defvar nvb--width nil "Width of Neovim's window during a command.")
 
@@ -1553,6 +1556,10 @@ pending for Emacs."
 
 (defvar crm-completion-table)
 
+(defvar nvb--minibuffer-depth 0 "Minibuffers the bridge stands in for.")
+
+(defun nvb--minibuffer-depth (orig) (+ (funcall orig) nvb--minibuffer-depth))
+
 (defun nvb--minibuffer-completion ()
   "(TABLE . PREDICATE) a reader set up for this minibuffer, if any.
 completing-read-multiple (org tags) sets its table buffer-locally from
@@ -1592,16 +1599,20 @@ completing-read-multiple (org tags) sets its table buffer-locally from
 (defun nvb--read-from-minibuffer (prompt &optional initial _keymap read hist default &rest _)
   (let* ((init (nvb--first initial))
          (def (nvb--first default))
+         (nvb--minibuffer-depth 1)
          (nvb--completion (nvb--minibuffer-completion))
-         (s (nvb--request "read_string"
-                          (append (list :prompt (nvb--prompt-string prompt)
-                                        :initial init
-                                        :default def
-                                        :history (nvb--history hist))
-                                  (when nvb--completion
-                                    (list :completion "customlist,EmacsComplete"))
-                                  ;; Inside org-read-date: Neovim previews the date as you type.
-                                  (when (bound-and-true-p org-defdecode) (list :date t))))))
+         (s (unwind-protect
+                (nvb--request "read_string"
+                              (append (list :prompt (nvb--prompt-string prompt)
+                                            :initial init
+                                            :default def
+                                            :history (nvb--history hist))
+                                      (when nvb--completion
+                                        (list :completion "customlist,EmacsComplete"))
+                                      ;; Inside org-read-date: Neovim previews the date as you type.
+                                      (when (bound-and-true-p org-defdecode) (list :date t))))
+              ;; Pairs the setup hook run above (transient takes its keymap back).
+              (with-temp-buffer (run-hooks 'minibuffer-exit-hook)))))
     (nvb--remember hist s)
     (when (and (string-empty-p s) def (not read))
       (setq s def))
@@ -1821,6 +1832,7 @@ evaluates them in Lisp instead."
     (read-key :override nvb--read-key-now)
     (read-from-minibuffer :override nvb--read-from-minibuffer)
     (read-string :override nvb--read-string)
+    (minibuffer-depth :around nvb--minibuffer-depth)
     (read-passwd :override nvb--read-passwd)
     (y-or-n-p :override nvb--y-or-n-p)
     (yes-or-no-p :override nvb--yes-or-no-p)
