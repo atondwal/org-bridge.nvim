@@ -616,14 +616,37 @@ after their text between BEG and END (C-c }'s row numbers)."
       (dolist (side '((before-string . overlay-start) (after-string . overlay-end)))
         (let ((str (overlay-get ov (car side))))
           ;; A string displayed in the fringe or margins (bookmarks' mark,
-          ;; which capture and refile set) shows nothing in the text.
+          ;; which capture and refile set) shows nothing in the text; see
+          ;; `nvb--margin-strings' for the margins.
           (when (and (stringp str) (not (nvb--outside-text-p (get-text-property 0 'display str))))
             (let ((lc (nvb--lc (funcall (cdr side) ov))))
-              (push (list (aref lc 0) (aref lc 1) (aref lc 1)
-                          (car (nvb--face-names (get-text-property 0 'face str)))
-                          (substring-no-properties str))
+              (push (let ((face (nvb--string-face str 0)))
+                      (append (list (aref lc 0) (aref lc 1) (aref lc 1) face
+                                    (substring-no-properties str))
+                              (let ((runs (nvb--display-runs str face))) (and runs (list runs)))))
                     spans))))))
     (nreverse spans)))
+
+(defun nvb--margin-strings (l1 l2)
+  "[LINE RIGHT RUNS] for the strings overlays on lines L1..L2 draw in a
+margin (Magit's log dates), RIGHT true for the right one."
+  (nvb--in-view
+   (save-excursion
+     (goto-char (point-min))
+     (forward-line l1)
+     (let ((beg (point)) out)
+       (forward-line (1+ (- l2 l1)))
+       (dolist (ov (overlays-in beg (point)))
+         (let* ((str (overlay-get ov 'before-string))
+                (display (and (stringp str) (get-text-property 0 'display str))))
+           (when (and (consp display) (consp (car display)) (eq (caar display) 'margin)
+                      (stringp (cadr display)))
+             (push (vector (aref (nvb--lc (overlay-start ov)) 0)
+                           (nvb--bool (eq (cadar display) 'right-margin))
+                           (or (nvb--display-runs (cadr display) nil)
+                               (vector (vector (substring-no-properties (cadr display)) nil))))
+                   out))))
+       (vconcat out)))))
 
 (defun nvb--outside-text-p (display)
   "Whether DISPLAY (a `display' property) draws in a fringe or margin."
@@ -641,15 +664,25 @@ over computed attribute lists."
 (defun nvb--display-runs (str base)
   "STR's runs as [[TEXT FACE]...] if STR has faces of its own; runs without
 one take BASE, the face of the text STR replaces."
-  (when (text-property-not-all 0 (length str) 'face nil str)
+  (when (seq-some (lambda (p) (text-property-not-all 0 (length str) p nil str))
+                  '(face font-lock-face))
     (let ((runs nil) (i 0))
       (while (< i (length str))
-        (let ((next (next-single-property-change i 'face str (length str))))
+        (let ((next (min (next-single-property-change i 'face str (length str))
+                         (next-single-property-change i 'font-lock-face str (length str)))))
           (push (vector (substring-no-properties str i next)
-                        (or (nvb--main-face (get-text-property i 'face str)) base))
+                        (or (nvb--string-face str i) base))
                 runs)
           (setq i next)))
       (vconcat (nreverse runs)))))
+
+(defun nvb--string-face (str i)
+  "One face name for the face at I in STR. Magit's strings give theirs as
+`font-lock-face' lists, merged as Emacs merges them."
+  (let ((face (or (get-text-property i 'face str) (get-text-property i 'font-lock-face str))))
+    (if (and (consp face) (cdr face) (not (keywordp (car face))) (seq-every-p #'symbolp face))
+        (nvb--anon-face (list :inherit face))
+      (nvb--main-face face))))
 
 (defun nvb--face-info (name)
   "Attributes Neovim needs to build a highlight group for face NAME."
@@ -774,7 +807,8 @@ ones (M-f) stay Neovim's."
              :name (buffer-name)
              :file (nvb--visited-file)
              :mode (symbol-name major-mode)
-             :readonly (nvb--bool buffer-read-only)
+             ;; `nvb--visit' makes its buffers read-only for itself.
+             :readonly (nvb--bool (and buffer-read-only (not nvb--unmirrored)))
              ;; Neovim sends keys typed at a heading's start to Emacs then.
              :speed (nvb--bool (and (derived-mode-p 'org-mode)
                                     (bound-and-true-p org-use-speed-commands)))
@@ -1317,11 +1351,15 @@ lines between its delimiters) without the blank lines after it."
   (with-current-buffer (nvb--buffer (plist-get params :id))
     (let* ((ranges (plist-get params :ranges))
            (spans (cl-mapcan (lambda (r) (nvb--spans (car r) (cadr r))) ranges))
-           (prefixes (apply #'vconcat (mapcar (lambda (r) (nvb--line-prefixes (car r) (cadr r))) ranges))))
+           (prefixes (apply #'vconcat (mapcar (lambda (r) (nvb--line-prefixes (car r) (cadr r))) ranges)))
+           (margins (apply #'vconcat (mapcar (lambda (r) (nvb--margin-strings (car r) (cadr r))) ranges))))
       (list :spans (vconcat (mapcar #'vconcat spans))
             :prefixes prefixes
+            :margins margins
             :faces (nvb--new-faces (append (nvb--span-faces spans)
-                                           (seq-map (lambda (p) (aref p 2)) prefixes)))
+                                           (seq-map (lambda (p) (aref p 2)) prefixes)
+                                           (seq-mapcat (lambda (m) (seq-map (lambda (r) (aref r 1)) (aref m 2)))
+                                                       margins)))
             :tick (buffer-chars-modified-tick)))))
 
 (defun nvb-rpc-rename (params)

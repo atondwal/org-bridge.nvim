@@ -334,6 +334,7 @@ function M.refresh_spans(buf)
   faces.add(res.faces)
   for _, r in ipairs(need) do api.nvim_buf_clear_namespace(buf, NS, r[1], r[2] + 1) end
   local prio = {}
+  local top_fill = 0
   local function line_len(line) return #(api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or "") end
   local function hide(line, sc, ec)
     if ec > sc then api.nvim_buf_set_extmark(buf, NS, line, sc, { end_col = ec, conceal = "", strict = false }) end
@@ -347,16 +348,24 @@ function M.refresh_spans(buf)
     end
     local opts = { end_col = ec, strict = false }
     if display and display:find("\n") then
-      -- Multi-line overlay text (agenda entry-text mode): the first line
-      -- inline, the rest as lines below.
-      local parts = vim.split(display, "\n", { plain = true })
-      local below = {}
-      for i = 2, #parts do below[#below + 1] = { { parts[i], display_hl } } end
+      -- Multi-line overlay text. At a line's start (Magit's blame headings)
+      -- all but its last line are lines of their own above; elsewhere
+      -- (agenda entry-text mode) the first line is inline, the rest below.
+      local lines = { {} }
+      for _, c in ipairs(chunks) do
+        for i, part in ipairs(vim.split(c[1], "\n", { plain = true })) do
+          if i > 1 then lines[#lines + 1] = {} end
+          if part ~= "" then table.insert(lines[#lines], { part, c[2] }) end
+        end
+      end
+      local above = sc == 0
+      local inline = table.remove(lines, above and #lines or 1)
+      if above and line == 0 then top_fill = top_fill + #lines end
       hide(line, sc, ec)
       api.nvim_buf_set_extmark(buf, NS, line, ec, {
-        virt_text = parts[1] ~= "" and HAS_0_10 and { { parts[1], display_hl } } or nil,
-        virt_text_pos = parts[1] ~= "" and HAS_0_10 and "inline" or nil,
-        virt_lines = below, strict = false })
+        virt_text = #inline > 0 and HAS_0_10 and inline or nil,
+        virt_text_pos = #inline > 0 and HAS_0_10 and "inline" or nil,
+        virt_lines = lines, virt_lines_above = above, strict = false })
     elseif display then
       -- Text Emacs draws as another string (agenda marks, pretty entities,
       -- column view). One character fits in conceal's replacement.
@@ -399,6 +408,26 @@ function M.refresh_spans(buf)
         virt_text = { { p[2], p[3] and faces.group(p[3]) or "Normal" } }, virt_text_pos = "inline",
         right_gravity = false,
       })
+    end
+  end
+  -- Emacs's margins (Magit's log dates) at the window's edges.
+  for _, m in ipairs(res.margins) do
+    local chunks = vim.tbl_map(function(r) return { r[1], r[2] and faces.group(r[2]) or "Normal" } end, m[3])
+    if m[2] then
+      api.nvim_buf_set_extmark(buf, NS, m[1], 0, { virt_text = chunks, virt_text_pos = "right_align" })
+    elseif HAS_0_10 then
+      api.nvim_buf_set_extmark(buf, NS, m[1], 0, { virt_text = chunks, virt_text_pos = "inline", right_gravity = false })
+    end
+  end
+  -- Neovim scrolls lines above the first one out of view; Emacs shows them.
+  -- Set when they go too: 0.13 leaves a stale screen line otherwise.
+  if need[1][1] == 0 then
+    for _, w in ipairs(vim.fn.win_findbuf(buf)) do
+      if vim.fn.line("w0", w) == 1 then
+        api.nvim_win_call(w, function()
+          if vim.fn.winsaveview().topfill ~= top_fill then vim.fn.winrestview({ topfill = top_fill }) end
+        end)
+      end
     end
   end
   -- Spans are only valid for the text Emacs saw.
@@ -562,15 +591,16 @@ local function apply_buffer(s, join_undo)
   end
   st.speed = s.speed
   st.server = s.server
-  -- Read-only Emacs buffers and column view take keys the way Emacs does.
-  local kind = ((st.special and s.readonly) or s.columns) and "menu" or "edit"
+  -- Read-only Emacs buffers (the agenda, a blamed file) and column view
+  -- take keys the way Emacs does.
+  local kind = (s.readonly or s.columns) and "menu" or "edit"
   local keys_sig = table.concat(s.keys)
   if st.kind ~= kind or (kind == "menu" and st.keys_sig ~= keys_sig) then
     st.kind, st.keys, st.keys_sig = kind, s.keys, keys_sig
     M.on_kind(buf, kind)
   end
+  vim.bo[buf].modifiable = not s.readonly
   if st.special then
-    vim.bo[buf].modifiable = not s.readonly
     -- :w in an editable Emacs buffer (src edit, capture) saves through Emacs.
     vim.bo[buf].buftype = s.readonly and "nofile" or "acwrite"
     local ft = s.mode == "org-mode" and "org"

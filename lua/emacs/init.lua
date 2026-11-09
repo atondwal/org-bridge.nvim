@@ -368,9 +368,10 @@ local function install_keys(buf, kind)
     if m.desc == "org-bridge.nvim" then vim.keymap.del(m.mode, m.lhs, { buffer = buf }) end
   end
   -- A file of another type Emacs shows (a link to a .txt) stays in sync
-  -- but keeps Neovim's keys, unless Emacs edits it for emacsclient.
+  -- but keeps Neovim's keys, unless Emacs edits it for emacsclient or has
+  -- it read-only (blame).
   local st = mirror.state[buf]
-  if not st.special and not st.server and not vim.tbl_contains(mirror.config.filetypes, vim.bo[buf].filetype) then
+  if not st.special and not st.server and kind == "edit" and not vim.tbl_contains(mirror.config.filetypes, vim.bo[buf].filetype) then
     return
   end
   -- Org's messages say "press C-u C-c C-c".

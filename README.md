@@ -51,7 +51,10 @@ Open an `.org` file. In normal mode these keys go to Emacs: `<Tab>`, `<S-Tab>`,
 `<M-S-arrows>`, `<S-arrows>`, `<C-S-arrows>` and `<M-x>`, plus anything starting with `<C-c>`
 (Emacs asks for the rest of the sequence). A file of another type that Emacs
 opens (a link to a `.txt`) stays in sync with Emacs but keeps Neovim's keys,
-unless Emacs edits it for `emacsclient` (Magit's commit message).
+unless Emacs edits it for `emacsclient` (Magit's commit message). A file
+Emacs makes read-only (`view-mode`, Magit's blame) is read-only in Neovim
+too, and takes keys as the agenda does (below) until Emacs makes it
+writable again.
 
 Emacs's point is *between* characters; Neovim's Normal-mode cursor is *on*
 one. Point goes just before the character under the cursor, so a command
@@ -151,7 +154,9 @@ float, and the keys you type go to the menu until a key closes it, as in
 Emacs: `-a` toggles a switch, `c` runs a command, `q` says "Unbound
 suffix", `<C-g>` or `<Esc>` closes it. The status refreshes by itself when
 git finishes. `c c` opens the commit message below the diff: type it in
-Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels.
+Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels. The log's
+author and date, which Magit draws in the right margin, show at the
+window's right edge; blame's headings are lines above each chunk.
 
 ## Options
 
