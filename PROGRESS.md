@@ -22,6 +22,12 @@ Known gaps, roughly by how often a user meets them:
    than the menu (17 of ~30 lines), and `scroll-up` signals. Judging
    visibility by lines alone is not enough; the window must fit the menu.
 
+5. A transient menu shows only if it pops up a window when the command
+   ends (`transient-show-popup` t, the default); with nil or a delay its
+   keymap is active but Neovim doesn't send it keys. While a menu is up,
+   Neovim's buffers aren't updated, so a suffix that keeps the menu open
+   shows its changes only when the menu closes.
+
 `make fuzz SEED=n STEPS=n` checks text consistency under random edits;
 `make soak SEED=n STEPS=n` runs a longer session over files, agenda and
 capture, logging time and resource use per 100 steps.

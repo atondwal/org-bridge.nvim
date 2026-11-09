@@ -1005,10 +1005,8 @@ which answer that command's own key reads (`:Emacs C-c a w')."
 or by asking Neovim."
   (let ((binding (key-binding keys t)))
     (while (keymapp binding)
-      (let ((k (or (pop nvb--pending-keys)
-                   (nvb--request "read_key" (list :prompt (concat (key-description keys) "-"))))))
-        (setq keys (vconcat keys (kbd k))
-              binding (key-binding keys t))))
+      (setq keys (vconcat keys (vector (nvb--read-key-now (concat (key-description keys) "-"))))
+            binding (key-binding keys t)))
     keys))
 
 (defvar nvb--last-command nil
@@ -1020,6 +1018,7 @@ repeat-sensitive commands like `org-cycle'.")
   "Run CMD as the command loop would after reading KEYS, with prefix ARG.
 \(`execute-kbd-macro' would reset `last-command' and the prefix argument.)"
   (setq this-command cmd
+        this-original-command cmd
         real-this-command cmd
         prefix-arg arg
         ;; Reset as the command loop does: the edits synced from Neovim
@@ -1039,13 +1038,29 @@ repeat-sensitive commands like `org-cycle'.")
     (when (seq-every-p #'characterp keys)
       (set--this-command-keys (concat keys))))
   (run-hooks 'pre-command-hook)
-  ;; `called-interactively-p' is always nil in batch, which silences the
-  ;; messages many commands print only when run interactively.
+  ;; The hook may replace the command: transient turns a key its menu
+  ;; doesn't bind into `transient-undefined'. `called-interactively-p' is
+  ;; always nil in batch, which silences the messages many commands print
+  ;; only when run interactively.
   (let ((noninteractive nil))
-    (command-execute cmd nil keys))
+    (command-execute this-command nil keys))
   (setq nvb--last-command this-command)
   (run-hooks 'post-command-hook)
   (when (and deactivate-mark mark-active) (deactivate-mark)))
+
+(defun nvb--menu-loop ()
+  "Run keys typed into a menu a command left up with a keymap of its own
+\(Magit's transients, `set-transient-map'), as the command loop would,
+until a key closes it. Each key is read with the menu shown."
+  (while (and overriding-terminal-local-map (nvb--menu-window))
+    ;; C-g and Escape are keys of the menu, not a quit.
+    (let ((keys (let ((inhibit-quit t))
+                  (nvb--complete-keys (vector (nvb--read-key-now ""))))))
+      (setq last-command nvb--last-command)
+      (condition-case e
+          (nvb--run-command (or (key-binding keys t) #'undefined) keys nil)
+        ;; Reported as the command loop does, and the menu stays up.
+        ((debug error quit) (message "%s" (error-message-string e)))))))
 
 (defvar nvb--width nil "Width of Neovim's window during a command.")
 
@@ -1121,6 +1136,7 @@ PARAMS has either :keys (kbd notation) or :command (a command name), and
             (nvb--with-width (plist-get params :width)
               (lambda ()
                 (nvb--run-command cmd keys (nvb--prefix-arg (plist-get params :count)))
+                (nvb--menu-loop)
                 ;; It ran from the restriction's edge; widened, the cursor's
                 ;; own position exists again.
                 (when (and outside (<= (point-min) want (point-max))) (goto-char want))
@@ -1458,22 +1474,25 @@ is folded and fold it otherwise."
 
 ;;; Input from Neovim. Emacs's own readers would read stdin in batch mode.
 
+(defun nvb--menu-window ()
+  "The window of the menu Emacs popped up, if any. Usually the selected
+window; help shown with `with-output-to-temp-buffer' (clock resolution)
+and transient's popup are in another."
+  (seq-find (lambda (w)
+              (let ((b (window-buffer w)))
+                ;; Org's menus are internal (" *Org todo*"); only the
+                ;; bridge's placeholder is never a menu.
+                (not (or (buffer-file-name b) (buffer-local-value 'nvb--id b)
+                         (equal (buffer-name b) nvb--placeholder)))))
+            (cons (selected-window) (window-list nil 'never))))
+
 (defun nvb--context ()
-  "The menu Emacs popped up in the selected window, if any, as a plist:
-:context TEXT, :context_spans faces as in `nvb--spans', :context_top the
-first line its window shows (SPC scrolls long menus) and new :faces."
-  (let* ((menu-p (lambda (w)
-                   (let ((b (window-buffer w)))
-                     ;; Org's menus are internal (" *Org todo*"); only the
-                     ;; bridge's placeholder is never a menu.
-                     (not (or (buffer-file-name b) (buffer-local-value 'nvb--id b)
-                              (equal (buffer-name b) nvb--placeholder))))))
-         ;; Usually the selected window; help shown with
-         ;; `with-output-to-temp-buffer' (clock resolution) is in another.
-         (win (seq-find menu-p (cons (selected-window) (window-list nil 'never))))
-         (buf (and win (window-buffer win))))
+  "The menu Emacs popped up, if any, as a plist: :context TEXT,
+:context_spans faces as in `nvb--spans', :context_top the first line its
+window shows (SPC scrolls long menus) and new :faces."
+  (let ((win (nvb--menu-window)))
     (when win
-      (with-current-buffer buf
+      (with-current-buffer (window-buffer win)
         (let ((spans (nvb--spans 0 (count-lines (point-min) (point-max)))))
           (list :context (buffer-substring-no-properties (point-min) (point-max))
                 :context_spans (vconcat (mapcar #'vconcat spans))
@@ -1497,20 +1516,25 @@ pending for Emacs."
     (nvb--read-key-now prompt)))
 
 (defun nvb--read-key-now (prompt)
-  ;; Commands like `org-emphasize' put their prompt in the echo area and
-  ;; call `read-char-exclusive' with none.
-  (let* ((prompt (nvb--prompt-string prompt))
-         (prompt (if (and (string-empty-p prompt) nvb--messages)
-                     ;; Reading a key clears the echo area in Emacs.
-                     (pop nvb--messages)
-                   prompt))
-         (k (or (pop nvb--pending-keys)
-                (condition-case nil
-                    (nvb--request "read_key" (append (list :prompt prompt) (nvb--context)))
-                  ;; Readers that bind `inhibit-quit' (org's fast tag and
-                  ;; TODO menus) handle C-g themselves, cleaning up as they go.
-                  (quit (if inhibit-quit "C-g" (signal 'quit nil)))))))
-    (aref (kbd k) 0)))
+  (if unread-command-events
+      ;; A key a command put back to be read again (transient's "-"); (t
+      ;; . KEY) is one not to record.
+      (let ((ev (pop unread-command-events)))
+        (if (memq (car-safe ev) '(t no-record)) (cdr ev) ev))
+    ;; Commands like `org-emphasize' put their prompt in the echo area and
+    ;; call `read-char-exclusive' with none.
+    (let* ((prompt (nvb--prompt-string prompt))
+           (prompt (if (and (string-empty-p prompt) nvb--messages)
+                       ;; Reading a key clears the echo area in Emacs.
+                       (pop nvb--messages)
+                     prompt))
+           (k (or (pop nvb--pending-keys)
+                  (condition-case nil
+                      (nvb--request "read_key" (append (list :prompt prompt) (nvb--context)))
+                    ;; Readers that bind `inhibit-quit' (org's fast tag and
+                    ;; TODO menus) handle C-g themselves, cleaning up as they go.
+                    (quit (if inhibit-quit "C-g" (signal 'quit nil)))))))
+      (aref (kbd k) 0))))
 
 (defun nvb--read-char (orig &optional prompt inherit seconds)
   (if (nvb--timed-wait-p prompt seconds)
@@ -1805,6 +1829,9 @@ evaluates them in Lisp instead."
     (font-lock-mode :around nvb--font-lock-mode)
     (call-interactively :around nvb--call-interactively)
     (recursive-edit :override nvb--recursive-edit)
+    ;; Batch Emacs reads no keys: the raw keys are the ones the bridge ran
+    ;; (transient 0.4 puts them back to read "-a").
+    (this-single-command-raw-keys :override this-single-command-keys)
     (basic-save-buffer :override nvb--save-buffer)
     (org-string-width :around nvb--org-string-width)
     ;; Themes and custom-set-faces end up here too.

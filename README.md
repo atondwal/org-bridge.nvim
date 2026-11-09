@@ -137,6 +137,14 @@ Neovim while a clock runs offers to clock out first.
 Neovim does all file writes. When Emacs saves (capture, `org-save-all-org-buffers`),
 the save goes through `:write`.
 
+## Magit
+
+Magit isn't a dependency, but works when your `init` loads it
+(`:EmacsCommand magit-status`). Its menus (`c`, `l`, `b`: transients) show
+in a float, and the keys you type go to the menu until a key closes it, as
+in Emacs: `-a` toggles a switch, `c` runs a command, `q` says "Unbound
+suffix", `<C-g>` or `<Esc>` closes it.
+
 ## Options
 
 `setup()` takes: `init` (Elisp file), `emacs` (executable), `log` (file),
