@@ -26,8 +26,9 @@ Known gaps, roughly by how often a user meets them:
    message opening) is dropped: Emacs refuses a command sent with windows
    from before the change (`nvb--unpulled`), and Neovim shows the change
    instead. Emacs notices such changes up to 0.2 s late
-   (`nvb--idle-check-seconds`), and they act on the windows of the tab
-   page the last command ran in, switching to it from another tab.
+   (`nvb--idle-check-seconds`), and act on the windows of the tab page
+   the last command ran in: one that selects a window switches to that
+   tab.
 
 6. A transient menu shows only if it pops up a window when the command
    ends (`transient-show-popup` t, the default); with nil or a delay its

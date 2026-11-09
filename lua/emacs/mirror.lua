@@ -881,14 +881,17 @@ local emacs_point
 -- Emacs named them with until the next command names them itself.
 local made = {}
 
--- Emacs's windows as last applied, by Neovim window: { id, point, top }.
+-- Emacs's windows as last applied, by Neovim window: { id, point, top,
+-- selected }.
 local reported = {}
 
 -- Mirror Emacs's windows after a command. Each Emacs window names the
 -- Neovim window it was made from: that window shows its buffer and point;
 -- a window Emacs made is new (split); a sent window Emacs no longer has
--- was deleted (close it).
+-- was deleted (close it). A pull leaves alone what the user changed and
+-- Emacs didn't (see pull).
 local function apply_windows(res, sent)
+  local current = api.nvim_get_current_win()
   local sent_top = {}
   for _, s in ipairs(sent) do sent_top[s.win] = s.top end
   local kept, prev, selected, now = {}, nil, nil, {}
@@ -916,7 +919,9 @@ local function apply_windows(res, sent)
     end
     kept[w] = true
     local b = r.id and by_id[r.id]
-    if b then
+    if r.kept then
+      -- The user's buffer (:e, :b) stays; Emacs learns of it with the next command.
+    elseif b then
       if api.nvim_win_get_buf(w) ~= b then api.nvim_win_set_buf(w, b) end
       setup_window(w)
       if #state[b].folds > 0 then apply_folds_in(w, state[b].folds) end
@@ -937,7 +942,7 @@ local function apply_windows(res, sent)
       -- No point: a pull's, which Emacs didn't move.
       if r.point or not b then emacs_point = b and { buf = b, point = r.point } end
     end
-    now[w] = { id = r.id, top = r.top, point = r.point or (reported[w] or {}).point }
+    now[w] = { id = r.id, top = r.top, point = r.point or (reported[w] or {}).point, selected = r.selected }
     prev = w
   end
   reported = now
@@ -948,7 +953,10 @@ local function apply_windows(res, sent)
       api.nvim_win_close(s.win, false)
     end
   end
-  if selected and api.nvim_win_is_valid(selected.win) then
+  if res.keep_current and api.nvim_win_is_valid(current) then
+    -- Splitting made another window current.
+    api.nvim_set_current_win(current)
+  elseif selected and api.nvim_win_is_valid(selected.win) then
     api.nvim_set_current_win(selected.win)
     if selected.buf then
       follow_insert_mode(selected.buf, selected.point, selected.win)
@@ -1215,9 +1223,16 @@ pull = function()
     if api.nvim_win_is_valid(w) then sent[#sent + 1] = { win = w, top = r.top } end
   end
   for _, r in ipairs(res.windows) do
-    local old = reported[made[r.win] or r.win]
-    -- Emacs didn't move it; Neovim's cursor may have (j, k): keep that.
-    if old and old.id == r.id and vim.deep_equal(old.point, r.point) then r.point = nil end
+    local w = made[r.win] or r.win
+    local old = reported[w]
+    if old and old.id == r.id then
+      -- Emacs didn't move it; Neovim's cursor may have (j, k): keep that.
+      if vim.deep_equal(old.point, r.point) then r.point = nil end
+      -- Nor show another buffer there; the user may have (:e).
+      r.kept = r.id and api.nvim_win_is_valid(w) and api.nvim_win_get_buf(w) ~= by_id[r.id]
+      -- Nor select another window: the user's (C-w k, :tabnext) stays current.
+      if r.selected and old.selected then res.keep_current = true end
+    end
   end
   -- Before the first command Emacs's windows aren't Neovim's.
   apply_state(res, next(reported) and sent)

@@ -133,6 +133,37 @@ return {
     end
   end,
 
+  -- Emacs: a refresh in a window you left keeps you where you went.
+  ["a change Emacs makes on its own leaves the user's window, buffer and tab current"] = function(t)
+    local org = t.open("went_away.org", "* A\n")
+    -- *out* below and selected, as magit-status leaves its buffer.
+    t.eval([[(defun nvb-test-show-out () (interactive)
+      (with-current-buffer (get-buffer-create "*out*") (insert "one\n"))
+      (select-window (split-window-below))
+      (switch-to-buffer "*out*"))]])
+    t.command("nvb-test-show-out")
+    t.eq(shown(), { "went_away.org", "*out*" })
+    -- As git exiting refreshes Magit's buffer.
+    local function out_changes()
+      local n = #lines_of("*out*")
+      t.eval(after_process([[(with-current-buffer "*out*" (insert "more\n"))]]))
+      wait_for("the change", function() return #lines_of("*out*") == n + 1 end)
+    end
+    vim.cmd("wincmd k")
+    out_changes()
+    t.eq(api.nvim_buf_get_name(0), org, "the window C-w k went to")
+    vim.cmd("wincmd j")
+    local txt = t.file("went_away.txt", "x\n")
+    vim.cmd("edit " .. txt)
+    out_changes()
+    t.eq(shown(), { "went_away.org", "went_away.txt" }, "the buffer :e put there")
+    t.eq(api.nvim_buf_get_name(0), txt)
+    vim.cmd("tabnew")
+    local tab = api.nvim_get_current_tabpage()
+    out_changes()
+    t.eq(api.nvim_get_current_tabpage(), tab, "the tab :tabnew made")
+  end,
+
   -- Magit: "Running git push", then git's error from the sentinel.
   ["a message Emacs prints right after a command shows after the command's own"] = function(t)
     t.open("message_order.org", "* A\n")
