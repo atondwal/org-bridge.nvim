@@ -1245,7 +1245,8 @@ pull = function()
       -- Nor show another buffer there; the user may have (:e).
       r.kept = r.id and api.nvim_win_is_valid(w) and api.nvim_win_get_buf(w) ~= by_id[r.id]
       -- Nor select another window: the user's (C-w k, :tabnext) stays current.
-      if r.selected and old.selected then res.keep_current = true end
+      -- One the user closed (:wq) isn't theirs to stay in.
+      if r.selected and old.selected and api.nvim_win_is_valid(w) then res.keep_current = true end
     end
   end
   -- Before the first command Emacs's windows aren't Neovim's.
