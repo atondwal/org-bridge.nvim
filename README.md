@@ -161,16 +161,24 @@ Emacs: `-a` toggles a switch, `c` runs a command, `q` says "Unbound
 suffix", `<C-g>` or `<Esc>` closes it. The status refreshes by itself when
 git finishes. When git asks for a username or password, `<Esc>` or `<C-g>`
 at the prompt stops git, as `C-g` does in Emacs. `e` on a conflicted file
-opens ediff's windows; its control panel takes ediff's keys (`n`, `a`)
-and `q` ends the session. `c c` opens the commit message below the diff: type it in
-Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels. The log's
+opens ediff's windows; its control panel takes ediff's keys (`n`, `a`) and
+`q` ends the session. `c c` opens the commit message below the diff: type
+it in Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels. As with
+git's own editor, quitting after writing (`:wq`, `ZZ`) also commits, and
+quitting that drops unsaved changes (`:q!`, `ZQ`, `:bd!`) cancels; `:w`
+alone just saves. The rebase todo works the same way; any other file
+`emacsclient` opens is done with what you last wrote. The log's
 author and date, which Magit draws in the right margin, show at the
-window's right edge; blame's headings are lines above each chunk.
+window's right edge; blame's headings are lines above each chunk. A file
+that isn't org keeps Vim's keys, but `<C-c>` goes to Emacs while a minor
+mode there binds keys under it, as smerge-mode does in a conflicted file
+(`<C-c>^u` keeps the upper side).
 
 For Vim keys, turn on evil in Magit buffers only, with evil-collection's
 bindings. Neovim keeps the keys evil binds as Vim does (`gg`, `v`, `$`)
 and sends the rest to Magit: `s`, `u` and `x` stage, unstage and discard,
-`gr` refreshes, `Z` stashes and `zo`/`zc`/`za` fold sections. In Visual
+`gr` refreshes, `Z` stashes and `zo`/`zc`/`za` fold sections; in the
+rebase todo `M-k`/`M-j` move a line. In Visual
 mode they act on the selected lines. Add to your `init`:
 
 ```elisp
@@ -183,13 +191,25 @@ mode they act on the selected lines. Add to your `init`:
 (require 'evil-collection)
 (evil-collection-init '(magit))
 (add-hook 'magit-mode-hook #'evil-local-mode)
+(add-hook 'git-rebase-mode-hook #'evil-local-mode) ; the rebase todo isn't a Magit mode
 ;; Digits stay counts (2j); z1..z4 show levels instead.
 (dolist (key '("1" "2" "3" "4"))
   (keymap-unset magit-section-mode-map key t))
 ```
 
 Without evil, Magit's own keys apply (`v` and `V` revert, so Visual mode
-can't start there).
+can't start there), except `j`, `k`, `g` and `G`, which Neovim keeps in
+every read-only buffer (`passthrough`, which the agenda relies on). So
+Magit's `k` (discard), `g` (refresh) and `j` (jump) are out of reach; run
+them with `:EmacsCommand magit-discard` (or `magit-refresh`), take them out
+of `passthrough`, or use the evil setup above.
+
+In a file that isn't org, `<C-c>` is usually Vim's (see above), so Magit's file menu is
+`:Emacs C-c M-g`, or map it:
+
+```lua
+vim.keymap.set("n", "<C-c><M-g>", "<Cmd>Emacs C-c M-g<CR>")
+```
 
 ## Options
 

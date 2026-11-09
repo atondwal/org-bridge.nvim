@@ -797,8 +797,9 @@ key Neovim has itself."
 `digit-argument' and evil's own keys: Neovim forwards these in read-only
 buffers (agenda, Magit) and column view and keeps the rest (G, 12G, counts)
 as its own. Under a printable prefix (evil-collection's g and z), the keys
-bound after it, as \"gr\": gg and zz stay Neovim's. Also the buffer's own
-Meta keys, as \"M-m\" (the agenda's bulk toggle); global ones (M-f) stay
+bound after it, as \"gr\": gg and zz stay Neovim's. Also Meta keys bound
+there to other than their global command, as \"M-m\" (the agenda's bulk
+toggle, evil-collection's M-k in the rebase todo); global ones (M-f) stay
 Neovim's."
   (with-current-buffer buf
     (save-excursion
@@ -810,8 +811,12 @@ Neovim's."
                 (dolist (d (number-sequence ?! ?~))
                   (when (nvb--forwarded-p (string c d)) (push (string c d) keys)))
               (when (nvb--forwarded-p key) (push key keys))))
-          (let ((b (local-key-binding (vector (event-apply-modifier c 'meta 27 "M-")) t)))
-            (when (and b (commandp b))
+          ;; Not `local-key-binding': evil's state maps are minor-mode maps.
+          ;; Unremapped: evil remaps the global M-y.
+          (let* ((key (vector (event-apply-modifier c 'meta 27 "M-")))
+                 (b (key-binding key t t)))
+            (when (and b (commandp b) (not (eq b (global-key-binding key t)))
+                       (not (nvb--vim-key-p key b)))
               (push (concat "M-" (string c)) keys))))
         (vconcat (nreverse keys))))))
 
@@ -841,8 +846,7 @@ Neovim's."
              :name (buffer-name)
              :file (nvb--visited-file)
              :mode (symbol-name major-mode)
-             ;; `nvb--visit' makes its buffers read-only for itself.
-             :readonly (nvb--bool (and buffer-read-only (not nvb--unmirrored)))
+             :readonly (nvb--bool buffer-read-only)
              ;; Neovim sends keys typed at a heading's start to Emacs then.
              :speed (nvb--bool (and (derived-mode-p 'org-mode)
                                     (bound-and-true-p org-use-speed-commands)))
@@ -855,6 +859,12 @@ Neovim's."
              ;; A file Emacs edits for emacsclient (Magit's commit message)
              ;; takes Emacs's keys (C-c C-c) whatever its type.
              :server (nvb--bool (bound-and-true-p server-buffer-clients))
+             ;; And a file of another type takes C-c while a minor mode on
+             ;; there binds keys under it (smerge-mode's C-c ^).
+             :minor_c_c (nvb--bool (cl-some (lambda (m)
+                                              (and (local-variable-p (car m)) (symbol-value (car m))
+                                                   (keymapp (lookup-key (cdr m) (kbd "C-c")))))
+                                            minor-mode-map-alist))
              :keys (nvb--bound-keys buf)
              ;; Evil has a Visual state here: those keys act on Neovim's selection.
              :visual (nvb--bool (bound-and-true-p evil-local-mode))
@@ -882,10 +892,10 @@ mirror (a .txt file, say). Internal, so never reported to Neovim.")
 reuse, split or delete windows act on Neovim's layout. LAYOUT is a list of
 \(:win W :id ID :point P :top T :height H) in screen order, every field
 but :id always present; SELECTED is the 1-based index of
-Neovim's current window. A window with :file instead of :id shows a file
-Neovim doesn't mirror (see `nvb--visit'). Each window remembers W in its
-`nvb-win' parameter, which is how Neovim pairs the windows back up
-afterwards. An unchanged layout keeps its windows: commands hold on to
+Neovim's current window. A window with :file (and :text if unsaved)
+instead of :id shows a file Neovim doesn't mirror (see `nvb--visit').
+Each window remembers W in its `nvb-win' parameter, which is how Neovim
+pairs the windows back up afterwards. An unchanged layout keeps its windows: commands hold on to
 them between commands (`org-agenda-show-window' for SPC SPC)."
   (nvb--fit-frame layout)
   (let ((windows (if (nvb--windows-are-p layout)
@@ -895,7 +905,7 @@ them between commands (`org-agenda-show-window' for SPC SPC)."
              for w in layout
              for i from 1
              do (let ((buf (cond ((plist-get w :id) (nvb--buffer (plist-get w :id)))
-                                 ((plist-get w :file) (nvb--visit (plist-get w :file)))
+                                 ((plist-get w :file) (nvb--visit (plist-get w :file) (plist-get w :text)))
                                  (t (get-buffer-create nvb--placeholder)))))
                   (nvb--show win buf)
                   (set-window-parameter win 'nvb-win (plist-get w :win))
@@ -957,16 +967,21 @@ heights, each with its mode line."
 (defvar-local nvb--unmirrored nil
   "Non-nil in a buffer `nvb--visit' opened for a file Neovim doesn't mirror.")
 
-(defun nvb--visit (file)
-  "FILE, read-only and current with the disk, for a Neovim window showing a
-file Emacs doesn't mirror: commands run from there (`org-store-link',
-capture's %a) need its buffer. Unsaved Neovim edits aren't in it."
+(defun nvb--visit (file text)
+  "FILE's buffer, for a Neovim window showing a file Emacs doesn't mirror:
+commands run from there (`org-store-link', capture's %a, Magit's blame)
+need it. It has Neovim's TEXT if Neovim has unsaved changes, else the
+disk's: a command that shows it has Neovim mirror it. Writable, as
+Neovim's files are, unless a mode makes it read-only (blame)."
   (let ((buf (find-file-noselect file t)))
     (with-current-buffer buf
-      (unless (verify-visited-file-modtime buf)
-        (revert-buffer t t t))
-      (setq buffer-read-only t
-            nvb--unmirrored t))
+      (unless nvb--unmirrored
+        (setq buffer-read-only nil
+              nvb--unmirrored t))
+      (cond (text (nvb--set-text buf text)
+                  (set-buffer-modified-p t))
+            ((or (buffer-modified-p) (not (verify-visited-file-modtime buf)))
+             (revert-buffer t t t))))
     buf))
 
 (defvar nvb--new-windows 0 "The last name given a window Emacs made (negative).")
@@ -1048,7 +1063,8 @@ instead of :id."
                   (find-file-noselect file t)
                 (get-buffer-create (plist-get params :name)))))
     (with-current-buffer buf
-      ;; `nvb--visit' may have opened it read-only before Neovim mirrored it.
+      ;; Neovim decides whether a file is writable (a read-only file's
+      ;; buffer is read-only in Emacs).
       (setq buffer-read-only nil
             nvb--unmirrored nil)
       ;; Only scratch buffers come with a :mode; a file's comes from its name.
@@ -1431,17 +1447,27 @@ file: staging a resolved conflict (vc-git), Magit's refresh."
   t)
 
 (defun nvb-rpc-close (params)
-  "Kill buffer ID's mirror. Its kill hooks may clock out, so the reply has
-the new :modeline."
+  "Kill buffer ID's mirror. A file emacsclient waits on (a commit message)
+is done instead, as quitting git's editor is: cancelled if Neovim dropped
+unsaved changes (:MODIFIED), else finished with what Neovim saved. Kill
+hooks may clock out, so the reply has the new :modeline."
   (let ((buf (gethash (plist-get params :id) nvb--mirrors)))
     (remhash (plist-get params :id) nvb--mirrors)
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (setq nvb--id nil)
-        ;; No kill prompt; but an indirect buffer (capture) shares its
-        ;; base's flag, which must stay for the base to be saved.
-        (unless (buffer-base-buffer) (set-buffer-modified-p nil)))
-      (kill-buffer buf)))
+        ;; No kill or save prompt; but an indirect buffer (capture) shares
+        ;; its base's flag, which must stay for the base to be saved.
+        (unless (buffer-base-buffer) (set-buffer-modified-p nil))
+        (cond ((not (bound-and-true-p server-buffer-clients)) (kill-buffer buf))
+              ;; with-editor's buffers refuse to be killed but by its own commands.
+              ((bound-and-true-p with-editor-mode)
+               ;; It puts back the windows from before the edit (even if
+               ;; it then fails): Neovim takes them as after C-c C-c.
+               (setq nvb--unpulled t)
+               (nvb--send (list :method "changed"))
+               (if (plist-get params :modified) (with-editor-cancel nil) (with-editor-finish nil)))
+              (t (server-done))))))
   (list :modeline (nvb--mode-line-extras)))
 
 (defun nvb--format-simple (spec)

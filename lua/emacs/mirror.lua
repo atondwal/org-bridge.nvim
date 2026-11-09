@@ -592,8 +592,8 @@ local function apply_buffer(s, join_undo)
   -- take keys the way Emacs does.
   local kind = (s.readonly or s.columns) and "menu" or "edit"
   local keys_sig = table.concat(s.keys)
-  if st.kind ~= kind or (kind == "menu" and st.keys_sig ~= keys_sig) then
-    st.kind, st.keys, st.keys_sig = kind, s.keys, keys_sig
+  if st.kind ~= kind or (kind == "menu" and st.keys_sig ~= keys_sig) or st.minor_c_c ~= s.minor_c_c then
+    st.kind, st.keys, st.keys_sig, st.minor_c_c = kind, s.keys, keys_sig, s.minor_c_c
     M.on_kind(buf, kind)
   end
   -- Only on a change: the user's own :set nomodifiable stays.
@@ -715,19 +715,22 @@ end
 function M.detach(buf)
   local st = state[buf]
   if not st then return end
+  if not rpc.running() or rpc.depth > 0 then return unbind(buf) end
   -- A special buffer's text can be a file's (capture shows its target):
-  -- keep what was typed there, as killing it in Emacs does.
+  -- keep what was typed there, as killing it in Emacs does. So does
+  -- cancelling an emacsclient file: a commit message's goes to M-p.
   -- Reported, not raised: the buffer must still unbind and close in Emacs.
-  if st.special and rpc.running() and rpc.depth == 0 then
+  if st.special or st.server then
     local ok, err = pcall(M.sync)
     if not ok then M.error(tostring(err)) end
   end
+  local modified = vim.bo[buf].modified
   unbind(buf)
-  if rpc.running() and rpc.depth == 0 then
-    -- Closing the clocked buffer clocks out (org asks first).
-    M.modeline = rpc.call("close", { id = st.id }).modeline
-    vim.cmd("redrawstatus")
-  end
+  -- Closing the clocked buffer clocks out (org asks first).
+  local ok, res = pcall(rpc.call, "close", { id = st.id, modified = modified })
+  if not ok then return M.error(tostring(res)) end
+  M.modeline = res.modeline
+  vim.cmd("redrawstatus")
 end
 
 -- Select the lines of the org `what` ("subtree" or "element") at the
@@ -862,10 +865,12 @@ local function layout()
     local buf = api.nvim_win_get_buf(w)
     local st = state[buf]
     local cur = api.nvim_win_get_cursor(w)
-    -- A file Emacs doesn't mirror is still a place to link to (capture's %a).
+    -- A file Emacs doesn't mirror is still a place to link to (capture's
+    -- %a), with its unsaved text.
     local file = not st and vim.bo[buf].buftype == "" and api.nvim_buf_get_name(buf) or ""
-    out[i] = { win = w, id = st and st.id, point = { cur[1] - 1, cur[2] },
-      file = vim.fn.filereadable(file) == 1 and file or nil,
+    file = vim.fn.filereadable(file) == 1 and file or nil
+    out[i] = { win = w, id = st and st.id, point = { cur[1] - 1, cur[2] }, file = file,
+      text = file and vim.bo[buf].modified and buf_text(buf) or nil,
       top = vim.fn.line("w0", w) - 1, height = api.nvim_win_get_height(w) }
     if w == api.nvim_get_current_win() then selected = i end
   end

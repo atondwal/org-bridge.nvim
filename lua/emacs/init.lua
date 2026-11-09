@@ -375,9 +375,11 @@ local function install_keys(buf, kind)
   end
   -- A file of another type Emacs shows (a link to a .txt) stays in sync
   -- but keeps Neovim's keys, unless Emacs edits it for emacsclient or has
-  -- it read-only (blame).
+  -- it read-only (blame); C-c goes to Emacs while a minor mode binds keys
+  -- under it there (smerge-mode).
   local st = mirror.state[buf]
   if not st.special and not st.server and kind == "edit" and not vim.tbl_contains(mirror.config.filetypes, vim.bo[buf].filetype) then
+    if st.minor_c_c then map(buf, "n", "<C-c>", key_handler("<C-c>", "n")) end
     return
   end
   -- Org's messages say "press C-u C-c C-c".
@@ -452,6 +454,21 @@ mirror.on_bind = function(buf)
   end
   api.nvim_create_autocmd("BufUnload", {
     group = group, buffer = buf, callback = function() mirror.detach(buf) end,
+  })
+  -- Quitting the last window on a file emacsclient waits on (:wq, ZZ in a
+  -- commit message) ends the edit, as quitting git's editor does: unload
+  -- it, and detach finishes it. One with unsaved changes stays hidden.
+  local function end_server_edit()
+    -- Detach can't reach Emacs mid-call.
+    if rpc.depth > 0 then return vim.defer_fn(end_server_edit, 50) end
+    local st = mirror.state[buf]
+    if st and st.server and api.nvim_buf_is_loaded(buf) and not vim.bo[buf].modified
+        and #vim.fn.win_findbuf(buf) == 0 then
+      api.nvim_buf_delete(buf, {})
+    end
+  end
+  api.nvim_create_autocmd("QuitPre", {
+    group = group, buffer = buf, callback = function() vim.schedule(end_server_edit) end,
   })
   -- Wiping a loaded buffer unloads it first, except when Neovim names one
   -- (:w on a buffer without a name): that keeps the buffer, and only its

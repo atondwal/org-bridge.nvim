@@ -27,6 +27,30 @@ local function after_process(form)
   return ("(set-process-sentinel (start-process \"t\" nil \"true\") (lambda (_p _e) %s))"):format(form)
 end
 
+-- Start Emacs's server, as Magit's with-editor does; stopped after the test.
+local function start_server(t)
+  if vim.fn.executable("emacsclient") == 0 then t.skip("no emacsclient") end
+  t.eval(([[(progn (require 'server)
+    (setq server-socket-dir %q server-name "nvb-test")
+    (make-directory server-socket-dir t)
+    (set-file-modes server-socket-dir #o700)
+    ;; As with-editor's mode: buffer-local state a reload would reset.
+    (add-hook 'server-visit-hook (lambda () (setq-local nvb-test-visited t)))
+    (server-start))]]):format(t.WORK .. "/server"))
+  -- Stop the server without asking about clients left.
+  t.after(function() t.eval("(server-start t t)") end)
+end
+
+-- Have emacsclient open path, as git does a commit message.
+local function edit_with_client(t, path)
+  t.eval(([[(start-process "client" nil "emacsclient" "-s" (expand-file-name server-name server-socket-dir) %q)]]):format(path))
+  wait_for("the file", function() return api.nvim_buf_get_name(0) == path end)
+end
+
+local function client_done(t)
+  return t.eval([[(let ((p (get-process "client"))) (or (null p) (eq (process-status p) 'exit)))]]) == "t"
+end
+
 return {
   ["a timer's edit reaches Neovim without a command"] = function(t)
     local path = t.open("timer_edit.org", "* A\n")
@@ -103,23 +127,13 @@ return {
   -- opens the file while Emacs is idle.
   -- Twice: the second time reuses the buffer Neovim kept (Magit's second commit).
   ["a file emacsclient opens appears with Emacs's keys, and C-x # finishes it, twice"] = function(t)
-    if vim.fn.executable("emacsclient") == 0 then t.skip("no emacsclient") end
     local msg = t.file("MSG.txt", "")
     t.open("client.org", "* A\n")
     t.command("ignore")
-    t.eval(([[(progn (require 'server)
-      (setq server-socket-dir %q server-name "nvb-test")
-      (make-directory server-socket-dir t)
-      (set-file-modes server-socket-dir #o700)
-      ;; As with-editor's mode: buffer-local state a reload would reset.
-      (add-hook 'server-visit-hook (lambda () (setq-local nvb-test-visited t)))
-      (server-start))]]):format(t.WORK .. "/server"))
-    -- Stop the server without asking about clients left.
-    t.after(function() t.eval("(server-start t t)") end)
+    start_server(t)
     for i = 1, 2 do
       t.file("MSG.txt", "template " .. i .. "\n") -- as git writes it before each commit
-      t.eval(([[(start-process "client" nil "emacsclient" "-s" (expand-file-name server-name server-socket-dir) %q)]]):format(msg))
-      wait_for("the file", function() return api.nvim_buf_get_name(0) == msg end)
+      edit_with_client(t, msg)
       t.eq(vim.fn.maparg("<C-c>", "n") ~= "", true, "C-c goes to Emacs")
       api.nvim_buf_set_lines(0, 0, -1, false, { "typed in Neovim " .. i })
       t.command("ignore")
@@ -127,7 +141,7 @@ return {
         "Emacs's buffer kept its state")
       t.answer(true) -- Save file?
       t.keys("C-x #")
-      wait_for("emacsclient to exit", function() return t.eval([[(let ((p (get-process "client"))) (or (null p) (eq (process-status p) 'exit)))]]) == "t" end)
+      wait_for("emacsclient to exit", function() return client_done(t) end)
       t.eq(t.read_file(msg), "typed in Neovim " .. i .. "\n")
       t.eq(shown(), { "client.org" })
     end
@@ -175,6 +189,29 @@ return {
     vim.wait(300)
     local messages = vim.split(vim.fn.execute("messages"), "\n", { trimempty = true })
     t.eq(vim.list_slice(messages, #messages - 1), { "first", "second" })
+  end,
+
+  -- As quitting git's editor: :w alone keeps git waiting; quitting the
+  -- file's last window after writing ends the edit with what was written,
+  -- and so does :q!, dropping what wasn't.
+  ["quitting a file emacsclient opened ends the edit"] = function(t)
+    local msg = t.file("QUIT_MSG.txt", "template\n")
+    t.open("quit_client.org", "* A\n")
+    vim.cmd("split")
+    t.command("ignore")
+    start_server(t)
+    for _, quit in ipairs({ "wq", "q!" }) do
+      edit_with_client(t, msg)
+      api.nvim_buf_set_lines(0, 0, -1, false, { "saved" })
+      vim.cmd("silent w")
+      vim.wait(300)
+      t.eq(client_done(t), false, ":w keeps it waiting")
+      api.nvim_buf_set_lines(0, 0, -1, false, { "typed after" })
+      vim.cmd(quit == "wq" and "silent wq" or "q!")
+      wait_for("emacsclient to exit after :" .. quit, function() return client_done(t) end)
+      t.eq(t.read_file(msg), (quit == "wq" and "typed after" or "saved") .. "\n")
+      t.eq(shown(), { "quit_client.org" })
+    end
   end,
 
   ["nothing is pulled when Emacs is idle"] = function(t)
