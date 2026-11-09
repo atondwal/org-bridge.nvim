@@ -36,8 +36,7 @@ Known gaps, roughly by how often a user meets them:
    Neovim's buffers aren't updated, so a suffix that keeps the menu open
    shows its changes only when the menu closes.
 
-7. Magit under evil (README): only two-key sequences under a prefix go
-   to Emacs (`gpp`, `gfu` don't); Visual `o`, `i`, `a` run Magit
+7. Magit under evil (README): Visual `o`, `i`, `a` run Magit
    commands, as in evil-collection's visual state, so text objects are
    gone there; `j`/`k` move by buffer line, evil-collection's by visual
    line; `magit-blame-mode` gets no evil (it's a minor mode in a file

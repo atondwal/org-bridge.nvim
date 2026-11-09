@@ -796,21 +796,23 @@ key Neovim has itself."
   "Printable keys bound to commands at BUF's point, other than self-insert,
 `digit-argument' and evil's own keys: Neovim forwards these in read-only
 buffers (agenda, Magit) and column view and keeps the rest (G, 12G, counts)
-as its own. Under a printable prefix (evil-collection's g and z), the keys
-bound after it, as \"gr\": gg and zz stay Neovim's. Also Meta keys bound
-there to other than their global command, as \"M-m\" (the agenda's bulk
+as its own. Under printable prefixes (evil-collection's g and z), the
+whole sequences, as \"gr\" and \"gpp\": gg and zz stay Neovim's. Also Meta
+keys bound there to other than their global command, as \"M-m\" (the agenda's bulk
 toggle, evil-collection's M-k in the rebase todo); global ones (M-f) stay
 Neovim's."
   (with-current-buffer buf
     (save-excursion
       (goto-char (nvb--shown-point buf))
       (let (keys)
+        (cl-labels ((walk (prefix)
+                      (dolist (c (number-sequence ?! ?~))
+                        (let ((key (concat prefix (string c))))
+                          (if (keymapp (key-binding key t))
+                              (walk key)
+                            (when (nvb--forwarded-p key) (push key keys)))))))
+          (walk ""))
         (dolist (c (number-sequence ?! ?~))
-          (let ((key (string c)))
-            (if (keymapp (key-binding key t))
-                (dolist (d (number-sequence ?! ?~))
-                  (when (nvb--forwarded-p (string c d)) (push (string c d) keys)))
-              (when (nvb--forwarded-p key) (push key keys))))
           ;; Not `local-key-binding': evil's state maps are minor-mode maps.
           ;; Unremapped: evil remaps the global M-y.
           (let* ((key (vector (event-apply-modifier c 'meta 27 "M-")))

@@ -117,8 +117,8 @@ files rarely have between headings.
 Read-only Emacs buffers such as the agenda open in a split. There, and in
 column view, every printable key Emacs binds goes to Emacs (`g`, `$`, `/`,
 `l` are agenda commands), except `j`, `k`, `g`, `G` (so `gg`, `G` and `19G`
-move; `r` rebuilds) and `:`. Under a prefix key, the two-key sequences
-Emacs binds go to Emacs too (`gr`). Keys Emacs doesn't bind stay Neovim's, and digits stay counts
+move; `r` rebuilds) and `:`. Under a prefix key, the sequences
+Emacs binds go to Emacs too (`gr`, `gpp`). Keys Emacs doesn't bind stay Neovim's, and digits stay counts
 unless Emacs gives them a command (column view's "pick the Nth value"). Emacs's menus (fast TODO selection, the
 agenda and export dispatchers) appear in a float while it waits for a key.
 

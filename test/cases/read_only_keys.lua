@@ -2,7 +2,7 @@
 -- under evil-collection (the README's Magit setup): a tiny mode stands in.
 -- Expected: what the same keys do in Magit there.
 
--- nvbk-mode binds g r under a prefix, and s and y (the agenda's year view),
+-- nvbk-mode binds g r under a prefix, g p p under two (Magit's push), and s and y (the agenda's year view),
 -- which record the region. With evil, it also gets what the bridge reads
 -- from evil: evil-local-mode, and evil's global maps binding g g and V.
 local MODE = [[
@@ -13,9 +13,10 @@ local MODE = [[
   (defun nvbk-refresh () (interactive) (push 'refresh nvbk-ran))
   (defun nvbk-first () (interactive) (push 'first nvbk-ran) (goto-char (point-min)))
   (defun nvbk-visual () (interactive) (push 'visual nvbk-ran))
+  (defun nvbk-push () (interactive) (push 'push nvbk-ran))
   (defvar nvbk-vim-map (define-keymap "g g" #'nvbk-first "V" #'nvbk-visual))
   (defvar-keymap nvbk-mode-map
-    "s" #'nvbk-stage "y" #'nvbk-stage "g r" #'nvbk-refresh "g g" #'nvbk-first "V" #'nvbk-visual)
+    "s" #'nvbk-stage "y" #'nvbk-stage "g r" #'nvbk-refresh "g p p" #'nvbk-push "g g" #'nvbk-first "V" #'nvbk-visual)
   (define-derived-mode nvbk-mode special-mode "Nvbk")
   (defvar nvbk-evil nil)
   (defun nvbk-open ()
@@ -46,6 +47,12 @@ return {
     t.eq({ vim.fn.line("."), ran(t) }, { 2, "nil" }, "g j is unbound in Emacs")
     t.feed("gr")
     t.eq(ran(t), "(refresh)")
+  end,
+
+  ["a key under two prefixes goes to Emacs"] = function(t)
+    open(t, false)
+    t.feed("gpp")
+    t.eq(ran(t), "(push)")
   end,
 
   -- evil-collection's M-k in the rebase todo is in evil's state maps,
