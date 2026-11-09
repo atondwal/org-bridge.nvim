@@ -101,20 +101,19 @@ return {
     t.eq(vim.fn.foldtextresult(1), "* A ▼")
   end,
 
-  -- Emacs draws org-hide in the background color, so leading stars are blank.
-  ["org-hide-leading-stars makes leading stars blank"] = function(t)
+  -- Emacs draws org-hide in the background color. Painted so in Neovim, a
+  -- cursor on a star vanishes where the terminal inverts the cell's colors;
+  -- spaces drawn over the stars look the same and keep it visible.
+  ["org-hide-leading-stars draws leading stars as spaces"] = function(t)
     t.set("org-hide-leading-stars", "t")
-    t.open("stars.org", "* A\n** B\n")
-    local hide
+    t.open("stars.org", "* A\n*** B\n")
+    local cover
     for _, m in ipairs(marks(1)) do
-      if m[3] == 0 and m[4].hl_group and m[4].hl_group:find("org_hide") then hide = m[4] end
+      if m[3] == 0 and m[4].virt_text_pos == "overlay" then cover = m[4] end
     end
-    assert(hide, "no org-hide highlight on the leading star")
-    local fg = api.nvim_get_hl(0, { name = hide.hl_group, link = false }).fg
-    local bg = api.nvim_get_hl(0, { name = "Normal" }).bg
-    if not bg then t.skip("Normal has no background color to paint the stars with") end
-    assert(hide.conceal == " " or (fg and fg == bg),
-      ("star is visible: fg=%s Normal bg=%s conceal=%s"):format(fg, bg, hide.conceal))
+    assert(cover, "nothing drawn over the leading stars")
+    t.eq(cover.virt_text, { { "  " } })
+    t.eq(cover.hl_mode, "combine", "the line's own highlight (cursorline) shows through")
   end,
 
   -- Emacs draws a face past the text when the newline has it and the face

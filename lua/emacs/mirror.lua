@@ -383,6 +383,12 @@ function M.refresh_spans(buf)
         opts.virt_text, opts.virt_text_pos = chunks, "overlay"
         api.nvim_buf_set_extmark(buf, NS, line, sc, opts)
       end
+    elseif face == "org-hide" then
+      -- Leading stars Emacs paints in the background color. Painted so here,
+      -- a cursor on them vanishes where the terminal inverts the cell's
+      -- colors; spaces over them look the same and keep it visible.
+      opts.virt_text, opts.virt_text_pos, opts.hl_mode = { { string.rep(" ", ec - sc) } }, "overlay", "combine"
+      api.nvim_buf_set_extmark(buf, NS, line, sc, opts)
     elseif face then
       -- Earlier faces in an Emacs face list win, like in Emacs.
       local key = line .. ":" .. sc
