@@ -45,6 +45,21 @@ return {
     t.eq(vim.fn.winsaveview().topfill, 1)
   end,
 
+  -- Emacs: one heading above line 101, however the window got there.
+  ["a long chunk's heading is drawn once after scrolling past its start"] = function(t)
+    local lines = {}
+    for i = 1, 400 do lines[i] = "line " .. i end
+    t.open("chunk.org", table.concat(lines, "\n") .. "\n")
+    t.eval([[(with-current-buffer "chunk.org" (goto-char (point-min))
+      (overlay-put (make-overlay (line-beginning-position 101) (line-beginning-position 351)) 'before-string "head\n"))]])
+    t.command("ignore")
+    for _, top in ipairs({ 91, 251, 91 }) do
+      vim.fn.winrestview({ topline = top, lnum = top })
+      mirror.refresh_spans(api.nvim_get_current_buf())
+    end
+    t.eq(#marks(100), 1)
+  end,
+
   -- Emacs: "3 days" in the right margin of "body"'s line.
   ["a margin string is drawn at the window's right edge"] = function(t)
     t.open("margin.org", "* A\nbody\n")

@@ -410,17 +410,13 @@ function M.refresh_spans(buf)
       })
     end
   end
-  -- Emacs's margins (Magit's log dates) at the window's edges.
+  -- Emacs's right margin (Magit's log dates) at the window's edge.
   for _, m in ipairs(res.margins) do
-    local chunks = vim.tbl_map(function(r) return { r[1], r[2] and faces.group(r[2]) or "Normal" } end, m[3])
-    if m[2] then
-      api.nvim_buf_set_extmark(buf, NS, m[1], 0, { virt_text = chunks, virt_text_pos = "right_align" })
-    elseif HAS_0_10 then
-      api.nvim_buf_set_extmark(buf, NS, m[1], 0, { virt_text = chunks, virt_text_pos = "inline", right_gravity = false })
-    end
+    local chunks = vim.tbl_map(function(r) return { r[1], r[2] and faces.group(r[2]) or "Normal" } end, m[2])
+    api.nvim_buf_set_extmark(buf, NS, m[1], 0, { virt_text = chunks, virt_text_pos = "right_align" })
   end
   -- Neovim scrolls lines above the first one out of view; Emacs shows them.
-  -- Set when they go too: 0.13 leaves a stale screen line otherwise.
+  -- Reset when they go, too, or 0.13 leaves a stale screen line.
   if need[1][1] == 0 then
     for _, w in ipairs(vim.fn.win_findbuf(buf)) do
       if vim.fn.line("w0", w) == 1 then
@@ -599,7 +595,11 @@ local function apply_buffer(s, join_undo)
     st.kind, st.keys, st.keys_sig = kind, s.keys, keys_sig
     M.on_kind(buf, kind)
   end
-  vim.bo[buf].modifiable = not s.readonly
+  -- Only on a change: the user's own :set nomodifiable stays.
+  if st.readonly ~= s.readonly then
+    st.readonly = s.readonly
+    vim.bo[buf].modifiable = not s.readonly
+  end
   if st.special then
     -- :w in an editable Emacs buffer (src edit, capture) saves through Emacs.
     vim.bo[buf].buftype = s.readonly and "nofile" or "acwrite"

@@ -614,12 +614,15 @@ after their text between BEG and END (C-c }'s row numbers)."
   (let (spans)
     (dolist (ov (overlays-in beg end))
       (dolist (side '((before-string . overlay-start) (after-string . overlay-end)))
-        (let ((str (overlay-get ov (car side))))
+        (let ((str (overlay-get ov (car side)))
+              (pos (funcall (cdr side) ov)))
           ;; A string displayed in the fringe or margins (bookmarks' mark,
           ;; which capture and refile set) shows nothing in the text; see
-          ;; `nvb--margin-strings' for the margins.
-          (when (and (stringp str) (not (nvb--outside-text-p (get-text-property 0 'display str))))
-            (let ((lc (nvb--lc (funcall (cdr side) ov))))
+          ;; `nvb--margin-strings' for the margins. One drawn outside the
+          ;; lines (a blame chunk's heading, scrolled past) is theirs.
+          (when (and (stringp str) (<= beg pos) (or (< pos end) (= pos (point-max)))
+                     (not (nvb--outside-text-p (get-text-property 0 'display str))))
+            (let ((lc (nvb--lc pos)))
               (push (let ((face (nvb--string-face str 0)))
                       (append (list (aref lc 0) (aref lc 1) (aref lc 1) face
                                     (substring-no-properties str))
@@ -628,8 +631,8 @@ after their text between BEG and END (C-c }'s row numbers)."
     (nreverse spans)))
 
 (defun nvb--margin-strings (l1 l2)
-  "[LINE RIGHT RUNS] for the strings overlays on lines L1..L2 draw in a
-margin (Magit's log dates), RIGHT true for the right one."
+  "[LINE RUNS] for the strings overlays on lines L1..L2 draw in the right
+margin (Magit's log dates)."
   (nvb--in-view
    (save-excursion
      (goto-char (point-min))
@@ -639,10 +642,9 @@ margin (Magit's log dates), RIGHT true for the right one."
        (dolist (ov (overlays-in beg (point)))
          (let* ((str (overlay-get ov 'before-string))
                 (display (and (stringp str) (get-text-property 0 'display str))))
-           (when (and (consp display) (consp (car display)) (eq (caar display) 'margin)
+           (when (and (consp display) (equal (car display) '(margin right-margin))
                       (stringp (cadr display)))
              (push (vector (aref (nvb--lc (overlay-start ov)) 0)
-                           (nvb--bool (eq (cadar display) 'right-margin))
                            (or (nvb--display-runs (cadr display) nil)
                                (vector (vector (substring-no-properties (cadr display)) nil))))
                    out))))
@@ -1358,7 +1360,7 @@ lines between its delimiters) without the blank lines after it."
             :margins margins
             :faces (nvb--new-faces (append (nvb--span-faces spans)
                                            (seq-map (lambda (p) (aref p 2)) prefixes)
-                                           (seq-mapcat (lambda (m) (seq-map (lambda (r) (aref r 1)) (aref m 2)))
+                                           (seq-mapcat (lambda (m) (seq-map (lambda (r) (aref r 1)) (aref m 1)))
                                                        margins)))
             :tick (buffer-chars-modified-tick)))))
 
