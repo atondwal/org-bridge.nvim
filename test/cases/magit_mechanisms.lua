@@ -1,6 +1,7 @@
 -- What Magit draws and does in a file's buffer, reproduced without Magit:
 -- blame's headings (overlay strings in `font-lock-face'), the log's dates
--- (margin strings), blame's read-only mode with its own keys.
+-- (margin strings), blame's read-only mode with its own keys, and the
+-- environment git runs in.
 -- Expected: the same in `emacs -Q -nw -l test/init.el`.
 local api = vim.api
 local mirror = require("emacs.mirror")
@@ -101,5 +102,11 @@ return {
     t.eval([[(defun nvbt-show () (interactive) (set-window-buffer nil (current-buffer)))]])
     t.command("nvbt-show")
     t.eq({ mirror.state[api.nvim_get_current_buf()] ~= nil, vim.bo.modifiable }, { true, true })
+  end,
+
+  -- Emacs after startup: TERM=dumb for subprocesses, so git doesn't color
+  -- the errors Magit reads ("! [rejected]").
+  ["a subprocess sees TERM=dumb"] = function(t)
+    t.eq(t.eval([[(shell-command-to-string "printf %s \"$TERM\"")]]), [["dumb"]])
   end,
 }

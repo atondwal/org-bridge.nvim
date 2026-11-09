@@ -193,6 +193,9 @@ count (magit-blame's headings)."
   ;; A process filter or sentinel that signals (C-g at a prompt Magit's
   ;; filter shows) goes here; batch Emacs's default exits.
   (setq command-error-function #'nvb--report-error)
+  ;; As `normal-top-level' does after startup, which batch Emacs never
+  ;; reaches: subprocesses have no terminal (git would color its errors).
+  (setenv "TERM" "dumb")
   (make-network-process
    :name "nvim-bridge" :server t :family 'local :service socket
    :coding 'utf-8-unix
