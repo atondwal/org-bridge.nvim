@@ -47,7 +47,73 @@ local function wait_dead()
   assert(vim.wait(5000, function() return not rpc.running() end, 10), "Emacs still running")
 end
 
+-- Elisp writing TEXT to PATH behind both editors' backs, as git does.
+local function emacs_writes(path, text)
+  -- %q escapes a newline as backslash-newline, which Elisp drops.
+  return (("(write-region %q nil %q)"):format(text, path):gsub("\\\n", "\\n"))
+end
+
+-- An Emacs command that writes files as a program it runs would (git
+-- checkout), { [path] = text }.
+local function define_rewrite(t, files)
+  local forms = {}
+  for path, text in pairs(files) do forms[#forms + 1] = emacs_writes(path, text) end
+  t.eval("(defun nvb-test-rewrite () (interactive) " .. table.concat(forms, " ") .. ")")
+end
+
+local function autoread(t)
+  local old = vim.o.autoread
+  vim.o.autoread = true
+  t.after(function() vim.o.autoread = old end)
+end
+
 return {
+  -- Emacs with magit-auto-revert-mode: git checkout reverts every buffer
+  -- visiting a changed file, shown or not.
+  ["files an Emacs command changes on disk reload in Neovim and Emacs, shown or not"] = function(t)
+    autoread(t)
+    local shown = t.open("changed_shown.org", t.DOC)
+    local hidden = t.open("changed_hidden.org", t.DOC)
+    local txt = t.file("changed.txt", "old\n")
+    vim.cmd("edit " .. shown .. " | split " .. txt .. " | wincmd j")
+    define_rewrite(t, { [shown] = "* X\n* Y\n", [hidden] = "* Z\n", [txt] = "new\ntext\n" })
+    t.command("nvb-test-rewrite")
+    t.eq(t.lines(), { "* X", "* Y" }, "shown org file")
+    t.eq(t.lines(vim.fn.bufnr(txt)), { "new", "text" }, "file Emacs doesn't mirror")
+    t.eq(t.lines(vim.fn.bufnr(hidden)), { "* Z" }, "hidden org file")
+    t.eq(vim.bo.modified, false)
+    agree(t, shown)
+    t.eq(t.emacs_lines(hidden), { "* Z" }, "hidden org file in Emacs")
+  end,
+
+  ["a file an Emacs command changes under unsaved Neovim edits is asked about, not reloaded"] = function(t)
+    autoread(t)
+    local path = t.open("changed_unsaved.org", t.DOC)
+    api.nvim_buf_set_lines(0, 1, 2, false, { "body a, unsaved" })
+    local reasons = {}
+    local au = api.nvim_create_autocmd("FileChangedShell", {
+      callback = function() reasons[#reasons + 1] = vim.v.fcs_reason end,
+    })
+    t.after(function() api.nvim_del_autocmd(au) end)
+    define_rewrite(t, { [path] = "* X\n" })
+    t.command("nvb-test-rewrite")
+    t.eq(reasons, { "conflict" }, "W12")
+    t.eq(t.lines()[2], "body a, unsaved")
+    agree(t, path)
+  end,
+
+  -- Magit: git exits and its sentinel refreshes the status buffer.
+  ["a file changed as an Emacs process exits reloads without a command"] = function(t)
+    autoread(t)
+    local path = t.open("changed_later.org", t.DOC)
+    t.command("ignore")
+    t.eval(([[(set-process-sentinel (start-process "t" nil "true") (lambda (_p _e)
+      %s (with-current-buffer (get-file-buffer %q) (with-silent-modifications (put-text-property 1 2 'nvb-test t)))))]]):format(
+      emacs_writes(path, "* Z\n"), path))
+    assert(vim.wait(3000, function() return t.lines()[1] == "* Z" end, 10), "reloaded")
+    agree(t, path)
+  end,
+
   [":e! drops synced and unsynced Neovim edits on both sides"] = function(t)
     local path = t.open("e_bang.org", t.DOC)
     api.nvim_buf_set_lines(0, 0, 1, false, { "* A synced" })

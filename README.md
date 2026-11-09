@@ -111,7 +111,7 @@ files rarely have between headings.
 | `:EmacsCommand org-refile` | run any command |
 | `:EmacsAgenda`, `:EmacsCapture` | the agenda / capture dispatchers |
 | `:EmacsEval (expr)` | evaluate Elisp |
-| `:EmacsRestart` | restart Emacs and re-attach open org buffers |
+| `:EmacsRestart` | restart Emacs and re-attach open org buffers; Emacs's own buffers (Magit's, the agenda) close |
 | `:EmacsLog` | Emacs's stderr and the bridge log |
 
 Read-only Emacs buffers such as the agenda open in a split. There, and in
@@ -145,7 +145,10 @@ so saving a file with its conflicts resolved stages it, as in Emacs.
 
 What Emacs does on its own between commands (a timer, a process finishing,
 a file `emacsclient` opens) shows up in Neovim by itself, once you are in
-Normal mode.
+Normal mode. You stay in the window you went to, unless Emacs selects
+another (a commit message opening). Files a command or process changes on
+disk (a checkout, a discard) reload as with `:checktime`: a buffer with
+unsaved edits asks first.
 
 ## Magit
 
