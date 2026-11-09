@@ -117,8 +117,8 @@ return {
     t.eq(tostring(err), "org-bridge.nvim: Emacs exited", "the error says what happened")
   end,
 
-  -- Emacs's own buffers (Magit's) die with it; the next Emacs's buffer of
-  -- the same name must show, and no key may run in a dead one.
+  -- Emacs's own buffers die with it, read-only ones (Magit's) wiped; the
+  -- next Emacs's buffer of the same name must show.
   ["a dead Emacs's buffers go, and the next one shows its own of the same name"] = function(t)
     t.open("dead_buffers.org", t.DOC)
     local function show()
@@ -130,9 +130,20 @@ return {
     show()
     t.eq(api.nvim_buf_get_name(0), "emacs://nvb-test-out")
     kill_emacs(t)
-    t.eq(vim.fn.bufexists("emacs://nvb-test-out"), 0, "gone")
+    t.eq(vim.fn.bufexists("emacs://nvb-test-out"), 0, "its name is free")
     show()
     t.eq({ api.nvim_buf_get_name(0), t.lines() }, { "emacs://nvb-test-out", { "one" } })
+  end,
+
+  ["a dead Emacs's buffer with text typed in it stays"] = function(t)
+    t.open("dead_typed.org", t.DOC)
+    t.eval([[(defun nvb-test-show () (interactive) (pop-to-buffer "nvb-test-typed"))]])
+    t.command("nvb-test-show")
+    api.nvim_buf_set_lines(0, 0, -1, false, { "typed" })
+    local buf = api.nvim_get_current_buf()
+    kill_emacs(t)
+    t.eq({ api.nvim_buf_is_valid(buf), api.nvim_buf_get_lines(buf, 0, -1, false) }, { true, { "typed" } })
+    t.eq(api.nvim_buf_get_name(buf), "emacs://nvb-test-typed (Emacs exited)")
   end,
 
   -- (kill-emacs) from :EmacsEval is Emacs exiting on its own.

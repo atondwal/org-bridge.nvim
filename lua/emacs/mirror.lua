@@ -1273,8 +1273,12 @@ api.nvim_create_autocmd("ModeChanged", {
 rpc.handlers.strwidth = function(p) return vim.fn.strdisplaywidth(p.s) end
 
 -- A message Emacs printed outside a command (a timer, like a finished
--- countdown).
-rpc.handlers.message = function(p) echo_line(p.text) end
+-- countdown). It replaces the one shown, as in Emacs; without the redraw
+-- one after an error would ask to press Enter.
+rpc.handlers.message = function(p)
+  vim.cmd("redraw")
+  echo_line(p.text)
+end
 
 -- Emacs wants a file buffer saved: Neovim does all file writes.
 rpc.handlers.save = function(p)
@@ -1294,8 +1298,17 @@ end
 function M.reset()
   local dead = {}
   for buf, st in pairs(state) do
-    if st.special then
+    if st.special and not vim.bo[buf].modifiable then
       dead[#dead + 1] = buf
+    elseif st.special then
+      -- Text typed there (a capture) stays, to copy out, under a name the
+      -- next Emacs's buffer won't need.
+      local name = api.nvim_buf_get_name(buf)
+      api.nvim_buf_set_name(buf, name .. " (Emacs exited)")
+      -- Renaming, like :file, leaves an alternate buffer with the old name.
+      for _, b in ipairs(api.nvim_list_bufs()) do
+        if b ~= buf and api.nvim_buf_get_name(b) == name then dead[#dead + 1] = b end
+      end
     else
       refold[buf] = st.folds
       for _, w in ipairs(vim.fn.win_findbuf(buf)) do
