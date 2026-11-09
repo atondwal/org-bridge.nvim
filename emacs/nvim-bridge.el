@@ -1399,17 +1399,27 @@ lines between its delimiters) without the blank lines after it."
   t)
 
 (defun nvb-rpc-close (params)
-  "Kill buffer ID's mirror. Its kill hooks may clock out, so the reply has
-the new :modeline."
+  "Kill buffer ID's mirror. A file emacsclient waits on (a commit message)
+is done instead, as quitting git's editor is: cancelled if Neovim dropped
+unsaved changes (:MODIFIED), else finished with what Neovim saved. Kill
+hooks may clock out, so the reply has the new :modeline."
   (let ((buf (gethash (plist-get params :id) nvb--mirrors)))
     (remhash (plist-get params :id) nvb--mirrors)
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (setq nvb--id nil)
-        ;; No kill prompt; but an indirect buffer (capture) shares its
-        ;; base's flag, which must stay for the base to be saved.
-        (unless (buffer-base-buffer) (set-buffer-modified-p nil)))
-      (kill-buffer buf)))
+        ;; No kill or save prompt; but an indirect buffer (capture) shares
+        ;; its base's flag, which must stay for the base to be saved.
+        (unless (buffer-base-buffer) (set-buffer-modified-p nil))
+        (cond ((not (bound-and-true-p server-buffer-clients)) (kill-buffer buf))
+              ;; with-editor's buffers refuse to be killed but by its own commands.
+              ((bound-and-true-p with-editor-mode)
+               ;; It puts back the windows from before the edit (even if
+               ;; it then fails): Neovim takes them as after C-c C-c.
+               (setq nvb--unpulled t)
+               (nvb--send (list :method "changed"))
+               (if (plist-get params :modified) (with-editor-cancel nil) (with-editor-finish nil)))
+              (t (server-done))))))
   (list :modeline (nvb--mode-line-extras)))
 
 (defun nvb--format-simple (spec)

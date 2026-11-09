@@ -715,19 +715,22 @@ end
 function M.detach(buf)
   local st = state[buf]
   if not st then return end
+  if not rpc.running() or rpc.depth > 0 then return unbind(buf) end
   -- A special buffer's text can be a file's (capture shows its target):
-  -- keep what was typed there, as killing it in Emacs does.
+  -- keep what was typed there, as killing it in Emacs does. So does
+  -- cancelling an emacsclient file: a commit message's goes to M-p.
   -- Reported, not raised: the buffer must still unbind and close in Emacs.
-  if st.special and rpc.running() and rpc.depth == 0 then
+  if st.special or st.server then
     local ok, err = pcall(M.sync)
     if not ok then M.error(tostring(err)) end
   end
+  local modified = vim.bo[buf].modified
   unbind(buf)
-  if rpc.running() and rpc.depth == 0 then
-    -- Closing the clocked buffer clocks out (org asks first).
-    M.modeline = rpc.call("close", { id = st.id }).modeline
-    vim.cmd("redrawstatus")
-  end
+  -- Closing the clocked buffer clocks out (org asks first).
+  local ok, res = pcall(rpc.call, "close", { id = st.id, modified = modified })
+  if not ok then return M.error(tostring(res)) end
+  M.modeline = res.modeline
+  vim.cmd("redrawstatus")
 end
 
 -- Select the lines of the org `what` ("subtree" or "element") at the

@@ -155,7 +155,11 @@ float, and the keys you type go to the menu until a key closes it, as in
 Emacs: `-a` toggles a switch, `c` runs a command, `q` says "Unbound
 suffix", `<C-g>` or `<Esc>` closes it. The status refreshes by itself when
 git finishes. `c c` opens the commit message below the diff: type it in
-Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels. The log's
+Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels. As with git's
+own editor, quitting after writing (`:wq`, `ZZ`) also commits, and quitting
+that drops unsaved changes (`:q!`, `ZQ`, `:bd!`) cancels; `:w` alone just
+saves. The rebase todo works the same way; any other file `emacsclient`
+opens is done with what you last wrote. The log's
 author and date, which Magit draws in the right margin, show at the
 window's right edge; blame's headings are lines above each chunk.
 
