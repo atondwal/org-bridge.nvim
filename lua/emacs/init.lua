@@ -232,8 +232,14 @@ local function install_menu_keys(buf)
   end
   -- Only keys Emacs binds there: unbound ones (G, 12G) stay Neovim's
   -- instead of typing into column view's buffer.
-  for _, k in ipairs(mirror.state[buf].keys) do
-    if not keep[k] then forward(menu_key_lhs(k)) end
+  local st = mirror.state[buf]
+  for _, k in ipairs(st.keys) do
+    local lhs = menu_key_lhs(k)
+    if not keep[k] then
+      forward(lhs)
+      -- Under evil, the selection is the region: V then s stages those lines.
+      if st.visual and #k == 1 then map(buf, "x", lhs, key_handler(lhs, "x")) end
+    end
   end
   for _, k in ipairs(MENU_BUFFER_KEYS) do forward(k) end
   menu_keys[buf] = forwarded

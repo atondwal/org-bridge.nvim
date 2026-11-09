@@ -587,6 +587,7 @@ local function apply_buffer(s, join_undo)
   end
   st.speed = s.speed
   st.server = s.server
+  st.visual = s.visual
   -- Read-only Emacs buffers (the agenda, a blamed file) and column view
   -- take keys the way Emacs does.
   local kind = (s.readonly or s.columns) and "menu" or "edit"
