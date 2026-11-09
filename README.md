@@ -190,7 +190,18 @@ mode they act on the selected lines. Add to your `init`:
 ```
 
 Without evil, Magit's own keys apply (`v` and `V` revert, so Visual mode
-can't start there).
+can't start there), except `j`, `k`, `g` and `G`, which Neovim keeps in
+every read-only buffer (`passthrough`, which the agenda relies on). So
+Magit's `k` (discard), `g` (refresh) and `j` (jump) are out of reach; run
+them with `:EmacsCommand magit-discard` (or `magit-refresh`), take them out
+of `passthrough`, or use the evil setup above.
+
+In a file that isn't org, `<C-c>` is usually Vim's (see above), so Magit's file menu is
+`:Emacs C-c M-g`, or map it:
+
+```lua
+vim.keymap.set("n", "<C-c><M-g>", "<Cmd>Emacs C-c M-g<CR>")
+```
 
 ## Options
 
