@@ -727,22 +727,40 @@ over the Neovim group a known face maps to."
   (let ((win (get-buffer-window buf)))
     (if win (window-point win) (with-current-buffer buf (point)))))
 
+(defvar evil-global-keymaps-alist)
+
+(defun nvb--vim-key-p (key cmd)
+  "Whether evil is on and its global maps bind KEY to CMD (gg, v, $): a
+key Neovim has itself."
+  (and (bound-and-true-p evil-local-mode)
+       (cl-some (lambda (m) (eq cmd (lookup-key (symbol-value (cdr m)) key)))
+                evil-global-keymaps-alist)))
+
+(defun nvb--forwarded-p (key)
+  "Whether KEY runs a command Neovim doesn't have."
+  (let ((b (key-binding key t)))
+    (and b (commandp b) (not (keymapp b))
+         (not (memq b '(self-insert-command undefined org-self-insert-command digit-argument)))
+         (not (nvb--vim-key-p key b)))))
+
 (defun nvb--bound-keys (buf)
-  "Printable keys bound to commands at BUF's point, other than self-insert
-and `digit-argument': Neovim forwards these in read-only buffers (agenda)
-and column view and keeps the rest (G, 12G, counts) as its own. Also the
-buffer's own Meta keys, as \"M-m\" (the agenda's bulk toggle); global
-ones (M-f) stay Neovim's."
+  "Printable keys bound to commands at BUF's point, other than self-insert,
+`digit-argument' and evil's own keys: Neovim forwards these in read-only
+buffers (agenda, Magit) and column view and keeps the rest (G, 12G, counts)
+as its own. Under a printable prefix (evil-collection's g and z), the keys
+bound after it, as \"gr\": gg and zz stay Neovim's. Also the buffer's own
+Meta keys, as \"M-m\" (the agenda's bulk toggle); global ones (M-f) stay
+Neovim's."
   (with-current-buffer buf
     (save-excursion
       (goto-char (nvb--shown-point buf))
       (let (keys)
         (dolist (c (number-sequence ?! ?~))
-          (let* ((key (string c))
-                 (b (key-binding key t)))
-            (when (and b (commandp b) (not (memq b '(self-insert-command undefined
-                                                     org-self-insert-command digit-argument))))
-              (push key keys)))
+          (let ((key (string c)))
+            (if (keymapp (key-binding key t))
+                (dolist (d (number-sequence ?! ?~))
+                  (when (nvb--forwarded-p (string c d)) (push (string c d) keys)))
+              (when (nvb--forwarded-p key) (push key keys))))
           (let ((b (local-key-binding (vector (event-apply-modifier c 'meta 27 "M-")) t)))
             (when (and b (commandp b))
               (push (concat "M-" (string c)) keys))))
@@ -788,6 +806,8 @@ ones (M-f) stay Neovim's."
              ;; takes Emacs's keys (C-c C-c) whatever its type.
              :server (nvb--bool (bound-and-true-p server-buffer-clients))
              :keys (nvb--bound-keys buf)
+             ;; Evil has a Visual state here: those keys act on Neovim's selection.
+             :visual (nvb--bool (bound-and-true-p evil-local-mode))
              ;; The agenda keeps its state here: "Org-Agenda Week Log Follow".
              :mode_line (string-trim (concat (nvb--format-simple mode-name)
                                              (nvb--format-simple mode-line-process)))
@@ -1237,9 +1257,10 @@ including one starting exactly there.")
 (defun nvb--trim-line-region (cmd)
   "End a region of whole lines (Neovim's linewise Visual mode sends one that
 stops where the next line starts) at the end of its last line, for CMD in
-`nvb--item-region-commands', which would take in the next line too.
-Others (sorting) need the final newline."
-  (when (and mark-active (memq cmd nvb--item-region-commands))
+`nvb--item-region-commands', which would take in the next line too, and
+in read-only buffers (Magit would stage it). Others (sorting) need the
+final newline."
+  (when (and mark-active (or buffer-read-only (memq cmd nvb--item-region-commands)))
     (let ((beg (region-beginning))
           (end (region-end)))
       (when (and (> end beg)

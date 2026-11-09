@@ -114,7 +114,8 @@ files rarely have between headings.
 Read-only Emacs buffers such as the agenda open in a split. There, and in
 column view, every printable key Emacs binds goes to Emacs (`g`, `$`, `/`,
 `l` are agenda commands), except `j`, `k`, `g`, `G` (so `gg`, `G` and `19G`
-move; `r` rebuilds) and `:`; keys Emacs doesn't bind stay Neovim's, and digits stay counts
+move; `r` rebuilds) and `:`. Under a prefix key, the two-key sequences
+Emacs binds go to Emacs too (`gr`). Keys Emacs doesn't bind stay Neovim's, and digits stay counts
 unless Emacs gives them a command (column view's "pick the Nth value"). Emacs's menus (fast TODO selection, the
 agenda and export dispatchers) appear in a float while it waits for a key.
 
@@ -153,6 +154,30 @@ suffix", `<C-g>` or `<Esc>` closes it. The status refreshes by itself when
 git finishes. `c c` opens the commit message below the diff: type it in
 Neovim, then `<C-c><C-c>` commits and `<C-c><C-k>` cancels.
 
+For Vim keys, turn on evil in Magit buffers only, with evil-collection's
+bindings. Neovim keeps the keys evil binds as Vim does (`gg`, `v`, `$`)
+and sends the rest to Magit: `s`, `u` and `x` stage, unstage and discard,
+`gr` refreshes, `Z` stashes and `zo`/`zc`/`za` fold sections. In Visual
+mode they act on the selected lines. Add to your `init`:
+
+```elisp
+;; Set before evil and evil-collection load: they read these then.
+(setq evil-want-keybinding nil                   ; evil-collection binds the keys
+      evil-collection-want-unimpaired-p nil      ; no global [ and ] maps
+      evil-collection-magit-use-z-for-folds t)   ; zo/zc/za/z1..z4 on sections, stash on Z
+(require 'evil)
+(require 'magit)
+(require 'evil-collection)
+(evil-collection-init '(magit))
+(add-hook 'magit-mode-hook #'evil-local-mode)
+;; Digits stay counts (2j); z1..z4 show levels instead.
+(dolist (key '("1" "2" "3" "4"))
+  (keymap-unset magit-section-mode-map key t))
+```
+
+Without evil, Magit's own keys apply (`v` and `V` revert, so Visual mode
+can't start there).
+
 ## Options
 
 `setup()` takes: `init` (Elisp file), `emacs` (executable), `log` (file),
@@ -185,7 +210,8 @@ with `EMACS_NVIM_DEBUG=1` to log every message between the two.
   keys on a line outside the restriction are refused until `C-x n w`.
 - A linewise Visual selection is a region of whole lines, newline included,
   as `C-SPC C-n` makes in Emacs (what sorting wants). Item commands
-  (`C-c C-x C-b`, `C-c *`, `C-c -`) stop at the end of its last line.
+  (`C-c C-x C-b`, `C-c *`, `C-c -`) and keys in read-only buffers (Magit's
+  `s`) stop at the end of its last line.
 - Raised/scaled text (sub/superscripts with pretty entities) is drawn flat.
 - org-goto's outline interface works, but its buffer appears only as a menu;
   the default here is path completion.
