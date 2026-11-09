@@ -166,7 +166,8 @@ window's right edge; blame's headings are lines above each chunk.
 For Vim keys, turn on evil in Magit buffers only, with evil-collection's
 bindings. Neovim keeps the keys evil binds as Vim does (`gg`, `v`, `$`)
 and sends the rest to Magit: `s`, `u` and `x` stage, unstage and discard,
-`gr` refreshes, `Z` stashes and `zo`/`zc`/`za` fold sections. In Visual
+`gr` refreshes, `Z` stashes and `zo`/`zc`/`za` fold sections; in the
+rebase todo `M-k`/`M-j` move a line. In Visual
 mode they act on the selected lines. Add to your `init`:
 
 ```elisp
@@ -179,6 +180,7 @@ mode they act on the selected lines. Add to your `init`:
 (require 'evil-collection)
 (evil-collection-init '(magit))
 (add-hook 'magit-mode-hook #'evil-local-mode)
+(add-hook 'git-rebase-mode-hook #'evil-local-mode) ; the rebase todo isn't a Magit mode
 ;; Digits stay counts (2j); z1..z4 show levels instead.
 (dolist (key '("1" "2" "3" "4"))
   (keymap-unset magit-section-mode-map key t))

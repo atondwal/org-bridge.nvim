@@ -48,6 +48,19 @@ return {
     t.eq(ran(t), "(refresh)")
   end,
 
+  -- evil-collection's M-k in the rebase todo is in evil's state maps,
+  -- which are minor-mode maps.
+  ["a Meta key a minor mode binds goes to Emacs; a global one stays Neovim's"] = function(t)
+    open(t, false)
+    t.eval([[(progn
+      (define-minor-mode nvbk-state-mode "As evil's state maps." :keymap (define-keymap "M-k" #'nvbk-refresh))
+      (with-current-buffer "*nvbk*" (nvbk-state-mode 1)))]])
+    t.command("ignore")
+    t.feed("<M-k>")
+    t.eq(ran(t), "(refresh)")
+    t.eq(vim.fn.maparg("<M-f>", "n"), "", "M-f is global")
+  end,
+
   ["keys evil binds as Vim does stay Neovim's"] = function(t)
     open(t, true)
     t.feed("Ggg")

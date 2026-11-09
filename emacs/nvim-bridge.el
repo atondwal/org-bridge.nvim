@@ -783,8 +783,9 @@ key Neovim has itself."
 `digit-argument' and evil's own keys: Neovim forwards these in read-only
 buffers (agenda, Magit) and column view and keeps the rest (G, 12G, counts)
 as its own. Under a printable prefix (evil-collection's g and z), the keys
-bound after it, as \"gr\": gg and zz stay Neovim's. Also the buffer's own
-Meta keys, as \"M-m\" (the agenda's bulk toggle); global ones (M-f) stay
+bound after it, as \"gr\": gg and zz stay Neovim's. Also Meta keys bound
+there to other than their global command, as \"M-m\" (the agenda's bulk
+toggle, evil-collection's M-k in the rebase todo); global ones (M-f) stay
 Neovim's."
   (with-current-buffer buf
     (save-excursion
@@ -796,8 +797,12 @@ Neovim's."
                 (dolist (d (number-sequence ?! ?~))
                   (when (nvb--forwarded-p (string c d)) (push (string c d) keys)))
               (when (nvb--forwarded-p key) (push key keys))))
-          (let ((b (local-key-binding (vector (event-apply-modifier c 'meta 27 "M-")) t)))
-            (when (and b (commandp b))
+          ;; Not `local-key-binding': evil's state maps are minor-mode maps.
+          ;; Unremapped: evil remaps the global M-y.
+          (let* ((key (vector (event-apply-modifier c 'meta 27 "M-")))
+                 (b (key-binding key t t)))
+            (when (and b (commandp b) (not (eq b (global-key-binding key t)))
+                       (not (nvb--vim-key-p key b)))
               (push (concat "M-" (string c)) keys))))
         (vconcat (nreverse keys))))))
 
