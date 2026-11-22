@@ -76,6 +76,8 @@ return {
     local which = {}
     for _, kc in ipairs(t.asked()[1].params.which) do which[kc[1]] = kc[2] end
     t.eq({ which["C-t"], which["C-x"], which["a"] }, { "org-todo", "+prefix", "org-agenda" })
+    -- Meta keys, kept under ESC, as typed; the command remapping runs.
+    t.eq({ which["M-w"], which["ESC"], which["C-n"] }, { "org-refile-copy", nil, "org-next-visible-heading" })
     t.eq(t.lines(), { "* NEXT A" })
   end,
 

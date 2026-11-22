@@ -1134,22 +1134,31 @@ which answer that command's own key reads (`:Emacs C-c a w')."
 
 (defun nvb--prefix-keys (prefix)
   "[KEY COMMAND] for each key bound after PREFIX (a vector) at point, sorted,
-COMMAND \"+prefix\" for another prefix: the keys which-key would show."
-  (let ((maps (delq nil (mapcar (lambda (m) (let ((b (lookup-key m prefix t))) (and (keymapp b) b)))
-                                (current-active-maps t))))
-        seen out)
-    (map-keymap
-     (lambda (ev _)
-       (unless (or (consp ev) (memq ev seen)
-                   (and (symbolp ev) (string-match-p "mouse\\|menu\\|bar\\|line\\|remap\\|wheel"
-                                                     (symbol-name ev))))
-         (push ev seen)
-         ;; The binding that wins, as maps can shadow each other's.
-         (let ((def (key-binding (vconcat prefix (vector ev)) t)))
-           (cond ((keymapp def) (push (vector (key-description (vector ev)) "+prefix") out))
-                 ((and (symbolp def) (commandp def) (not (eq def 'undefined)))
-                  (push (vector (key-description (vector ev)) (symbol-name def)) out))))))
-     (make-composed-keymap maps))
+COMMAND \"+prefix\" for another prefix: the keys which-key would show.
+Meta keys, which keymaps keep under ESC, are listed as M-x: ESC alone
+can't be typed as a prefix in Neovim. COMMAND is the one that runs, after
+remapping (org's C-c C-n runs `org-next-visible-heading')."
+  (let (seen out)
+    (cl-labels ((walk (keys)
+                  (map-keymap
+                   (lambda (ev _)
+                     (let ((key (vconcat keys (vector ev))))
+                       (unless (or (consp ev) (member key seen)
+                                   (and (symbolp ev)
+                                        (string-match-p "mouse\\|menu\\|bar\\|line\\|remap\\|wheel"
+                                                        (symbol-name ev))))
+                         (push key seen)
+                         ;; The binding that wins, as maps can shadow each other's.
+                         (let ((def (key-binding (vconcat prefix key) t)))
+                           (cond ((and (keymapp def) (equal key [27])) (walk key))
+                                 ((keymapp def) (push (vector (key-description key) "+prefix") out))
+                                 ((and (symbolp def) (commandp def) (not (eq def 'undefined)))
+                                  (push (vector (key-description key) (symbol-name def)) out)))))))
+                   (make-composed-keymap
+                    (delq nil (mapcar (lambda (m) (let ((b (lookup-key m (vconcat prefix keys) t)))
+                                                    (and (keymapp b) b)))
+                                      (current-active-maps t)))))))
+      (walk []))
     (vconcat (sort out (lambda (a b) (string< (aref a 0) (aref b 0)))))))
 
 (defun nvb--complete-keys (keys)
