@@ -1,5 +1,5 @@
 test:
-	nvim --headless -u NONE -l test/run.lua $(FILTER)
+	nvim --headless -u NONE -l test/run.lua $(if $(FILTER),"$(FILTER)")
 
 .PHONY: test demo fuzz soak
 
