@@ -56,9 +56,26 @@ return {
   ["C-c C-t shows the fast-selection menu in a float, closed after the key"] = function(t)
     t.open("menu.org", "* A\n")
     local seen = with_real_ui({ "C-t", "n" }, function() t.keys("C-c") end)
-    t.eq(seen[1], {}, "no float for the C-c- prefix")
+    -- No key typed within the delay: the keys after C-c show, as which-key's
+    -- (all of them on a wider screen).
+    local listed = table.concat(seen[1], "\n")
+    assert(listed:find("!%s+→ org%-time%-stamp%-inactive") and listed:find('"%s+→ %+prefix'),
+      "keys after C-c:\n" .. listed)
     t.eq(seen[2], { "{ [t] TODO   [n] NEXT   [d] DONE   }" }, "menu float")
     t.eq(#floats(), 0, "float closed")
+    t.eq(t.lines(), { "* NEXT A" })
+  end,
+
+  -- Every active map's keys, as the one that wins binds them: org's under
+  -- C-c, and a global one org leaves alone.
+  ["a prefix sends the keys that can follow it, from every active map"] = function(t)
+    t.open("which.org", "* A\n")
+    t.eval([[(global-set-key (kbd "C-c a") #'org-agenda)]])
+    t.answer("C-t", "n")
+    t.keys("C-c")
+    local which = {}
+    for _, kc in ipairs(t.asked()[1].params.which) do which[kc[1]] = kc[2] end
+    t.eq({ which["C-t"], which["C-x"], which["a"] }, { "org-todo", "+prefix", "org-agenda" })
     t.eq(t.lines(), { "* NEXT A" })
   end,
 

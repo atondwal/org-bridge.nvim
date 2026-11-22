@@ -58,6 +58,59 @@ local function show_context(p, text)
   return win
 end
 
+-- How long a prefix (C-c) waits for the next key before showing them all.
+local WHICH_KEY_DELAY_MS = 500
+-- Longer command names are cut, so more columns fit.
+local WHICH_KEY_NAME_WIDTH = 30
+
+vim.api.nvim_set_hl(0, "EmacsWhichKey", { link = "Function", default = true })
+vim.api.nvim_set_hl(0, "EmacsWhichKeyGroup", { link = "Keyword", default = true })
+vim.api.nvim_set_hl(0, "EmacsWhichKeySeparator", { link = "Comment", default = true })
+
+-- The keys that can follow a prefix, { key, command } pairs from Emacs, in
+-- columns across the bottom of the screen, as which-key shows them.
+local function show_which(which)
+  local key_width, name_width = 0, 0
+  for _, kc in ipairs(which) do
+    key_width = math.max(key_width, vim.fn.strdisplaywidth(kc[1]))
+    name_width = math.max(name_width, math.min(vim.fn.strdisplaywidth(kc[2]), WHICH_KEY_NAME_WIDTH))
+  end
+  local cell = key_width + 3 + name_width + 2
+  local cols = math.max(1, math.floor((vim.o.columns - 2) / cell))
+  local rows = math.ceil(#which / cols)
+  local height = math.min(rows, vim.o.lines - 4)
+  local lines, marks = {}, {}
+  for i = 1, height do lines[i] = "" end
+  -- Down each column, then across.
+  for i, kc in ipairs(which) do
+    local row, col = (i - 1) % rows + 1, math.floor((i - 1) / rows)
+    if row <= height then
+      local name = vim.fn.strcharpart(kc[2], 0, WHICH_KEY_NAME_WIDTH)
+      if name ~= kc[2] then name = vim.fn.strcharpart(name, 0, WHICH_KEY_NAME_WIDTH - 1) .. "…" end
+      local start = #lines[row]
+      local key = kc[1] .. (" "):rep(key_width - vim.fn.strdisplaywidth(kc[1]))
+      local text = key .. " → " .. name
+      lines[row] = lines[row] .. text .. (" "):rep(col < cols - 1 and cell - vim.fn.strdisplaywidth(text) or 0)
+      marks[#marks + 1] = { row - 1, start, start + #key, "EmacsWhichKey" }
+      marks[#marks + 1] = { row - 1, start + #key, start + #key + #" → ", "EmacsWhichKeySeparator" }
+      marks[#marks + 1] = { row - 1, start + #key + #" → ", start + #text,
+        kc[2] == "+prefix" and "EmacsWhichKeyGroup" or "Normal" }
+    end
+  end
+  local buf = float_buf()
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  for _, m in ipairs(marks) do
+    vim.api.nvim_buf_set_extmark(buf, MENU_NS, m[1], m[2], { end_col = m[3], hl_group = m[4] })
+  end
+  local win = vim.api.nvim_open_win(buf, false, {
+    relative = "editor", style = "minimal", border = "rounded",
+    row = vim.o.lines - height - 4, col = 0, width = vim.o.columns - 2, height = height,
+    title = height < rows and (" %d more not shown "):format(#which - height * cols) or nil,
+  })
+  redraw()
+  return win
+end
+
 -- Clear what a prompt left on the command line, so the next message
 -- doesn't stack under it and ask to press Enter.
 local function clear_cmdline()
@@ -78,6 +131,10 @@ rpc.handlers.read_key = function(p)
   if p.faces then faces.add(p.faces) end -- only sent with a menu
   local win = text and show_context(long and {} or p, text)
   echo_prompt(long and "" or p.prompt)
+  if not win and p.which and #p.which > 0
+      and not vim.wait(WHICH_KEY_DELAY_MS, function() return vim.fn.getchar(1) ~= 0 end, 10) then
+    win = show_which(p.which)
+  end
   local k = keys.read()
   if win then vim.api.nvim_win_close(win, true) end
   clear_cmdline()

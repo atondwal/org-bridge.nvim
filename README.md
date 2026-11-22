@@ -49,7 +49,8 @@ with `nowrap`.
 Open an `.org` file. In normal mode these keys go to Emacs: `<Tab>`, `<S-Tab>`,
 `<M-CR>`, `<C-CR>`, `<S-CR>`, `<M-S-CR>`, `<C-S-CR>`, `<M-arrows>`,
 `<M-S-arrows>`, `<S-arrows>`, `<C-S-arrows>` and `<M-x>`, plus anything starting with `<C-c>`
-(Emacs asks for the rest of the sequence). A file of another type that Emacs
+(Emacs asks for the rest of the sequence; pause after a prefix and a
+which-key-style popup lists the keys that can follow). A file of another type that Emacs
 opens (a link to a `.txt`) stays in sync with Emacs but keeps Neovim's keys,
 unless Emacs edits it for `emacsclient` (Magit's commit message). A file
 Emacs makes read-only (`view-mode`, Magit's blame) is read-only in Neovim

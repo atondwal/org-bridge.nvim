@@ -1132,12 +1132,33 @@ which answer that command's own key reads (`:Emacs C-c a w')."
     (cons (seq-subseq keys 0 i)
           (mapcar (lambda (k) (key-description (vector k))) (seq-subseq keys i)))))
 
+(defun nvb--prefix-keys (prefix)
+  "[KEY COMMAND] for each key bound after PREFIX (a vector) at point, sorted,
+COMMAND \"+prefix\" for another prefix: the keys which-key would show."
+  (let ((maps (delq nil (mapcar (lambda (m) (let ((b (lookup-key m prefix t))) (and (keymapp b) b)))
+                                (current-active-maps t))))
+        seen out)
+    (map-keymap
+     (lambda (ev _)
+       (unless (or (consp ev) (memq ev seen)
+                   (and (symbolp ev) (string-match-p "mouse\\|menu\\|bar\\|line\\|remap\\|wheel"
+                                                     (symbol-name ev))))
+         (push ev seen)
+         ;; The binding that wins, as maps can shadow each other's.
+         (let ((def (key-binding (vconcat prefix (vector ev)) t)))
+           (cond ((keymapp def) (push (vector (key-description (vector ev)) "+prefix") out))
+                 ((and (symbolp def) (commandp def) (not (eq def 'undefined)))
+                  (push (vector (key-description (vector ev)) (symbol-name def)) out))))))
+     (make-composed-keymap maps))
+    (vconcat (sort out (lambda (a b) (string< (aref a 0) (aref b 0)))))))
+
 (defun nvb--complete-keys (keys)
   "Extend KEYS (a vector) until it names a command, from the pending keys
-or by asking Neovim."
+or by asking Neovim, which shows the keys that can follow."
   (let ((binding (key-binding keys t)))
     (while (keymapp binding)
-      (setq keys (vconcat keys (vector (nvb--read-key-now (concat (key-description keys) "-"))))
+      (setq keys (vconcat keys (vector (nvb--read-key-now (concat (key-description keys) "-")
+                                                          (nvb--prefix-keys keys))))
             binding (key-binding keys t)))
     keys))
 
@@ -1697,7 +1718,9 @@ pending for Emacs."
       (funcall orig prompt inherit seconds)
     (nvb--read-key-now prompt)))
 
-(defun nvb--read-key-now (prompt)
+(defun nvb--read-key-now (prompt &optional which)
+  "Read a key from Neovim; WHICH, the keys that can follow a prefix
+\(`nvb--prefix-keys'), are shown if the user pauses."
   (if unread-command-events
       ;; A key a command put back to be read again (transient's "-"); (t
       ;; . KEY) is one not to record.
@@ -1712,7 +1735,8 @@ pending for Emacs."
                      prompt))
            (k (or (pop nvb--pending-keys)
                   (condition-case nil
-                      (nvb--request "read_key" (append (list :prompt prompt) (nvb--context)))
+                      (nvb--request "read_key" (append (list :prompt prompt) (nvb--context)
+                                                       (when which (list :which which))))
                     ;; Readers that bind `inhibit-quit' (org's fast tag and
                     ;; TODO menus) handle C-g themselves, cleaning up as they go.
                     (quit (if inhibit-quit "C-g" (signal 'quit nil)))))))
