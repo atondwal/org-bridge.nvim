@@ -122,6 +122,13 @@ Emacs binds go to Emacs too (`gr`, `gpp`). Keys Emacs doesn't bind stay Neovim's
 unless Emacs gives them a command (column view's "pick the Nth value"). Emacs's menus (fast TODO selection, the
 agenda and export dispatchers) appear in a float while it waits for a key.
 
+With fzf.vim installed, Emacs's completion prompts (`M-x`, refile targets,
+link types) open in fzf; `M-x` shows each command's key in the org buffer
+beside it, and `<M-CR>` answers with the text typed rather than the match.
+Without fzf.vim, and for prompts that complete a piece at a time (outline
+paths with `org-outline-path-complete-in-steps`), they stay on the command
+line with `<Tab>` completion.
+
 Colors: org's faces follow your colorscheme (`faces` maps them to Neovim
 groups), and other faces get Emacs's colors for your `background`. A face
 you customize in Emacs (`set-face-attribute`, a theme) keeps Emacs's

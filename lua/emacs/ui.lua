@@ -322,7 +322,110 @@ function! EmacsComplete(A, L, P) abort
 endfunction
 ]])
 
-rpc.handlers.completing_read = function(p)
+-- Keys getcharstr spells with Neovim's internal codes, as a terminal sends
+-- them; control characters and text pass as they are.
+local TERM_KEYS = {
+  ["<Up>"] = "\27[A", ["<Down>"] = "\27[B", ["<Right>"] = "\27[C", ["<Left>"] = "\27[D",
+  ["<Home>"] = "\27[H", ["<End>"] = "\27[F", ["<Del>"] = "\27[3~",
+  ["<PageUp>"] = "\27[5~", ["<PageDown>"] = "\27[6~", ["<S-Tab>"] = "\27[Z",
+  ["<BS>"] = "\127", ["<M-CR>"] = "\27\r",
+}
+
+local function term_bytes(raw)
+  if raw:byte(1) ~= 0x80 then return raw end
+  local key = vim.fn.keytrans(raw)
+  local meta = key:match("^<M%-(.)>$")
+  return TERM_KEYS[key] or (meta and "\27" .. meta) or ""
+end
+
+-- fzf.vim's fzf#run on spec.items, each with its key binding (if any) as a
+-- dim second column. Returns the item picked, the query when nothing
+-- matches (or on M-CR, to answer with the text typed), or nil if cancelled.
+local function fzf_pick(spec)
+  local width = 0
+  if spec.bindings then
+    for _, item in ipairs(spec.items) do width = math.max(width, vim.fn.strdisplaywidth(item)) end
+  end
+  -- Each line starts with its item's index, hidden, so the answer is the
+  -- item exactly; only the item, not its binding, is matched.
+  local lines = {}
+  for i, item in ipairs(spec.items) do
+    local key = spec.bindings and spec.bindings[item] or ""
+    lines[i] = key == "" and i .. "\t" .. item
+      or ("%d\t%s%s\t\27[2m%s\27[0m"):format(i, item, (" "):rep(width - vim.fn.strdisplaywidth(item)), key)
+  end
+  local insert = vim.fn.mode() == "i"
+  local out, done
+  vim.fn["fzf#run"](vim.fn["fzf#wrap"]({
+    source = lines,
+    options = { "--prompt", spec.prompt, "--query", spec.query, "--print-query", "--ansi",
+      "--delimiter", "\t", "--with-nth", "2..", "--nth", "1", "--bind", "alt-enter:print-query",
+      -- The shorter item first, not the shorter line: padding before a binding counts there.
+      "--tiebreak", "chunk" },
+    ["sink*"] = function(res) out = res end,
+    exit = function() done = true end,
+  }))
+  -- We're inside an RPC call, so Neovim never enters Terminal mode in
+  -- fzf's window: pass the keys typed to fzf here.
+  local chan = vim.bo.channel
+  while true do
+    redraw()
+    local typed, status = vim.wait(20, function() return done or vim.fn.getchar(1) ~= 0 end, 5)
+    if done then break end
+    if typed then
+      vim.fn.chansend(chan, term_bytes(vim.fn.getcharstr()))
+    elseif status == -2 then
+      vim.fn.chansend(chan, "\3")
+    end
+  end
+  -- fzf#run's startinsert would put the org buffer in Insert mode.
+  if not insert then vim.cmd("stopinsert") end
+  if not out then return nil end
+  local index = out[2] and tonumber(out[2]:match("^(%d+)\t"))
+  return index and spec.items[index] or out[1]
+end
+
+-- Picks a completing_read answer from a list. Tests set it; otherwise fzf,
+-- when fzf.vim is loaded and there's a screen to show it on.
+M.picker = nil
+
+local function picker()
+  if M.picker then return M.picker end
+  if #vim.api.nvim_list_uis() > 0 and vim.fn.exists("*fzf#run") == 1 then return fzf_pick end
+end
+
+-- The answers to show, in order: the default, Emacs's history for this
+-- prompt (newest first), then the candidates.
+local function picker_items(p)
+  local is_candidate = {}
+  for _, c in ipairs(p.candidates or {}) do is_candidate[c] = true end
+  local items, seen = {}, {}
+  local function add(c)
+    -- With require_match, only candidates are answers.
+    if c and c ~= "" and not seen[c] and (is_candidate[c] or not p.require_match) then
+      seen[c] = true
+      items[#items + 1] = c
+    end
+  end
+  add(p.default)
+  for _, h in ipairs(p.history or {}) do add(h) end
+  for _, c in ipairs(p.candidates or {}) do add(c) end
+  return items
+end
+
+function M.completing_read(p)
+  local pick = picker()
+  -- A dynamic table's candidates aren't all its answers: complete with Tab.
+  if pick and not p.dynamic then
+    local bindings
+    if p.bindings then
+      bindings = {}
+      for i, c in ipairs(p.candidates) do bindings[c] = p.bindings[i] end
+    end
+    local s = pick({ prompt = p.prompt, query = p.initial or "", items = picker_items(p), bindings = bindings })
+    if not s then quit() end
+    return s
+  end
   candidates = p.candidates or {}
   local s = input({
     prompt = p.prompt, default = p.initial or "", cancelreturn = CANCELLED,
@@ -332,6 +435,7 @@ rpc.handlers.completing_read = function(p)
   if s == CANCELLED then quit() end
   return s
 end
+rpc.handlers.completing_read = M.completing_read
 
 rpc.handlers.confirm = function(p)
   if p.typed then

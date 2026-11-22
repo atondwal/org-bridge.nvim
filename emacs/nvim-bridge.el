@@ -1829,20 +1829,39 @@ time; the text before the boundary is put back on each candidate."
                                             all))
                        nvb--max-candidates)))))
 
+(defun nvb--binding (command)
+  "The key COMMAND is on in the current buffer, as `key-description' spells
+it, or \"\" if none can be typed."
+  (let ((desc (key-description (where-is-internal command nil t))))
+    (if (string-match-p "mouse" desc) "" desc)))
+
 (defun nvb--completing-read (prompt collection &optional predicate require-match
                                     initial hist default &rest _)
   (let* ((nvb--completion (cons collection predicate))
          (init (nvb--first initial))
-         (cands (all-completions (or init "") collection predicate))
+         (cands (seq-take (all-completions (or init "") collection predicate) nvb--max-candidates))
          (def (nvb--first default))
+         ;; M-x's table is a function only to add metadata; its candidates
+         ;; are all the commands.
+         (commands (eq (completion-metadata-get (completion-metadata "" collection predicate) 'category)
+                       'command))
+         ;; Bound in the buffer the command runs in, not a minibuffer.
+         (bindings (when commands
+                     (vconcat (mapcar (lambda (c) (nvb--binding (intern c))) cands))))
          (ask (lambda ()
                 (nvb--request "completing_read"
-                              (list :prompt (nvb--prompt-string prompt)
-                                    :candidates (vconcat (seq-take cands nvb--max-candidates))
-                                    :require_match (nvb--bool (and require-match (not (eq require-match 'confirm-after-completion))))
-                                    :initial init
-                                    :default def
-                                    :history (nvb--history hist)))))
+                              (append
+                               (list :prompt (nvb--prompt-string prompt)
+                                     :candidates (vconcat cands)
+                                     :require_match (nvb--bool (and require-match (not (eq require-match 'confirm-after-completion))))
+                                     :initial init
+                                     :default def
+                                     :history (nvb--history hist)
+                                     ;; Other function tables may complete a piece at a
+                                     ;; time (outline paths), so their candidates aren't
+                                     ;; all the answers.
+                                     :dynamic (nvb--bool (and (functionp collection) (not commands))))
+                               (when bindings (list :bindings bindings))))))
          (s (funcall ask)))
     ;; As RET in Emacs's minibuffer (`minibuffer-complete-and-exit'): with
     ;; REQUIRE-MATCH t an answer is first completed ("B" to "B/"), and
