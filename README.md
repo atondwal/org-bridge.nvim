@@ -125,7 +125,9 @@ agenda and export dispatchers) appear in a float while it waits for a key.
 With fzf.vim installed, Emacs's completion prompts (`M-x`, refile targets,
 link types) open in fzf; `M-x` shows each command's key in the org buffer
 beside it, and `<M-CR>` answers with the text typed rather than the match.
-Without fzf.vim, and for prompts that complete a piece at a time (outline
+Org's tag prompt (without fast tag selection) opens with the heading's tags
+ticked: `<Tab>` toggles one, `<CR>` sets the ticked tags (plus the match,
+after a search), and `<M-CR>` adds the text typed as a new tag. Without fzf.vim, and for prompts that complete a piece at a time (outline
 paths with `org-outline-path-complete-in-steps`), they stay on the command
 line with `<Tab>` completion.
 

@@ -271,7 +271,121 @@ local function date_preview(prompt)
   end
 end
 
-rpc.handlers.read_string = function(p)
+-- Keys getcharstr spells with Neovim's internal codes, as a terminal sends
+-- them; control characters and text pass as they are.
+local TERM_KEYS = {
+  ["<Up>"] = "\27[A", ["<Down>"] = "\27[B", ["<Right>"] = "\27[C", ["<Left>"] = "\27[D",
+  ["<Home>"] = "\27[H", ["<End>"] = "\27[F", ["<Del>"] = "\27[3~",
+  ["<PageUp>"] = "\27[5~", ["<PageDown>"] = "\27[6~", ["<S-Tab>"] = "\27[Z",
+  ["<BS>"] = "\127", ["<M-CR>"] = "\27\r",
+}
+
+local function term_bytes(raw)
+  if raw:byte(1) ~= 0x80 then return raw end
+  local key = vim.fn.keytrans(raw)
+  local meta = key:match("^<M%-(.)>$")
+  return TERM_KEYS[key] or (meta and "\27" .. meta) or ""
+end
+
+-- fzf.vim's fzf#run on spec.items, each with its key binding (if any) as a
+-- dim second column. Returns the item picked, the query when nothing
+-- matches (or on M-CR, to answer with the text typed), or nil if cancelled.
+-- With spec.multi, the first spec.selected items start ticked and it
+-- returns a list: the ticked items, plus the text typed on M-CR.
+local function fzf_pick(spec)
+  local width = 0
+  if spec.bindings then
+    for _, item in ipairs(spec.items) do width = math.max(width, vim.fn.strdisplaywidth(item)) end
+  end
+  -- Each line starts with its item's index, hidden, so the answer is the
+  -- item exactly; only the item, not its binding, is matched.
+  local lines = {}
+  for i, item in ipairs(spec.items) do
+    local key = spec.bindings and spec.bindings[item] or ""
+    lines[i] = key == "" and i .. "\t" .. item
+      or ("%d\t%s%s\t\27[2m%s\27[0m"):format(i, item, (" "):rep(width - vim.fn.strdisplaywidth(item)), key)
+  end
+  local insert = vim.fn.mode() == "i"
+  local out, done
+  local options = { "--prompt", spec.prompt, "--query", spec.query, "--print-query", "--ansi",
+    "--delimiter", "\t", "--with-nth", "2..", "--nth", "1",
+    -- The shorter item first, not the shorter line: padding before a binding counts there.
+    "--tiebreak", "chunk" }
+  if spec.multi then
+    -- Enter after a search takes the match under the cursor too. Without
+    -- one it takes only the ticked items (Tab unticks and moves on), and
+    -- none at all if none are: accept alone would take the one under the cursor.
+    vim.list_extend(options, { "--multi", "--expect", "alt-enter", "--bind", "enter:transform:"
+      .. [[[ -n "$FZF_QUERY" ] && echo select+accept || ]]
+      .. [[{ [ "$FZF_SELECT_COUNT" = 0 ] && echo print-query || echo accept; }]] })
+    if spec.selected > 0 then
+      local ticks = {}
+      for i = 1, spec.selected do ticks[i] = ("pos(%d)+select"):format(i) end
+      vim.list_extend(options, { "--bind", "load:" .. table.concat(ticks, "+") .. "+first" })
+    end
+  else
+    vim.list_extend(options, { "--bind", "alt-enter:print-query" })
+  end
+  vim.fn["fzf#run"](vim.fn["fzf#wrap"]({
+    source = lines,
+    options = options,
+    ["sink*"] = function(res) out = res end,
+    exit = function() done = true end,
+  }))
+  -- We're inside an RPC call, so Neovim never enters Terminal mode in
+  -- fzf's window: pass the keys typed to fzf here.
+  local chan = vim.bo.channel
+  while true do
+    redraw()
+    local typed, status = vim.wait(20, function() return done or vim.fn.getchar(1) ~= 0 end, 5)
+    if done then break end
+    if typed then
+      vim.fn.chansend(chan, term_bytes(vim.fn.getcharstr()))
+    elseif status == -2 then
+      vim.fn.chansend(chan, "\3")
+    end
+  end
+  -- fzf#run's startinsert would put the org buffer in Insert mode.
+  if not insert then vim.cmd("stopinsert") end
+  if not out then return nil end
+  local function item(line) return spec.items[tonumber(line:match("^(%d+)\t"))] end
+  if spec.multi then
+    -- Lines: the query, the --expect key pressed, then the ticked items.
+    local picked = vim.tbl_map(item, vim.list_slice(out, 3))
+    if out[2] == "alt-enter" and out[1] ~= "" then picked[#picked + 1] = out[1] end
+    return picked
+  end
+  return out[2] and item(out[2]) or out[1]
+end
+
+-- Picks a completing_read answer from a list. Tests set it; otherwise fzf,
+-- when fzf.vim is loaded and there's a screen to show it on.
+M.picker = nil
+
+local function picker()
+  if M.picker then return M.picker end
+  if #vim.api.nvim_list_uis() > 0 and vim.fn.exists("*fzf#run") == 1 then return fzf_pick end
+end
+
+-- completing-read-multiple (org's tags): the items already given come
+-- first, ticked; the answer is the ticked items joined as Emacs splits them.
+local function pick_many(pick, p)
+  local items, given = {}, {}
+  for _, s in ipairs(p.selected) do
+    given[s] = true
+    items[#items + 1] = s
+  end
+  for _, c in ipairs(p.multiple) do
+    if not given[c] then items[#items + 1] = c end
+  end
+  local picked = pick({ prompt = p.prompt, query = "", items = items, multi = true, selected = #p.selected })
+  if not picked then quit() end
+  return table.concat(picked, p.joiner)
+end
+
+function M.read_string(p)
+  local pick = p.multiple and picker()
+  if pick then return pick_many(pick, p) end
   local opts = { prompt = p.prompt, default = p.initial or "", cancelreturn = CANCELLED,
     completion = p.completion }
   local s
@@ -287,6 +401,7 @@ rpc.handlers.read_string = function(p)
   if s == CANCELLED then quit() end
   return s
 end
+rpc.handlers.read_string = M.read_string
 
 -- Candidates for the completing_read in progress, used by EmacsComplete().
 local candidates = {}
@@ -321,78 +436,6 @@ function! EmacsComplete(A, L, P) abort
   return luaeval('require("emacs.ui").complete(_A)', a:A)
 endfunction
 ]])
-
--- Keys getcharstr spells with Neovim's internal codes, as a terminal sends
--- them; control characters and text pass as they are.
-local TERM_KEYS = {
-  ["<Up>"] = "\27[A", ["<Down>"] = "\27[B", ["<Right>"] = "\27[C", ["<Left>"] = "\27[D",
-  ["<Home>"] = "\27[H", ["<End>"] = "\27[F", ["<Del>"] = "\27[3~",
-  ["<PageUp>"] = "\27[5~", ["<PageDown>"] = "\27[6~", ["<S-Tab>"] = "\27[Z",
-  ["<BS>"] = "\127", ["<M-CR>"] = "\27\r",
-}
-
-local function term_bytes(raw)
-  if raw:byte(1) ~= 0x80 then return raw end
-  local key = vim.fn.keytrans(raw)
-  local meta = key:match("^<M%-(.)>$")
-  return TERM_KEYS[key] or (meta and "\27" .. meta) or ""
-end
-
--- fzf.vim's fzf#run on spec.items, each with its key binding (if any) as a
--- dim second column. Returns the item picked, the query when nothing
--- matches (or on M-CR, to answer with the text typed), or nil if cancelled.
-local function fzf_pick(spec)
-  local width = 0
-  if spec.bindings then
-    for _, item in ipairs(spec.items) do width = math.max(width, vim.fn.strdisplaywidth(item)) end
-  end
-  -- Each line starts with its item's index, hidden, so the answer is the
-  -- item exactly; only the item, not its binding, is matched.
-  local lines = {}
-  for i, item in ipairs(spec.items) do
-    local key = spec.bindings and spec.bindings[item] or ""
-    lines[i] = key == "" and i .. "\t" .. item
-      or ("%d\t%s%s\t\27[2m%s\27[0m"):format(i, item, (" "):rep(width - vim.fn.strdisplaywidth(item)), key)
-  end
-  local insert = vim.fn.mode() == "i"
-  local out, done
-  vim.fn["fzf#run"](vim.fn["fzf#wrap"]({
-    source = lines,
-    options = { "--prompt", spec.prompt, "--query", spec.query, "--print-query", "--ansi",
-      "--delimiter", "\t", "--with-nth", "2..", "--nth", "1", "--bind", "alt-enter:print-query",
-      -- The shorter item first, not the shorter line: padding before a binding counts there.
-      "--tiebreak", "chunk" },
-    ["sink*"] = function(res) out = res end,
-    exit = function() done = true end,
-  }))
-  -- We're inside an RPC call, so Neovim never enters Terminal mode in
-  -- fzf's window: pass the keys typed to fzf here.
-  local chan = vim.bo.channel
-  while true do
-    redraw()
-    local typed, status = vim.wait(20, function() return done or vim.fn.getchar(1) ~= 0 end, 5)
-    if done then break end
-    if typed then
-      vim.fn.chansend(chan, term_bytes(vim.fn.getcharstr()))
-    elseif status == -2 then
-      vim.fn.chansend(chan, "\3")
-    end
-  end
-  -- fzf#run's startinsert would put the org buffer in Insert mode.
-  if not insert then vim.cmd("stopinsert") end
-  if not out then return nil end
-  local index = out[2] and tonumber(out[2]:match("^(%d+)\t"))
-  return index and spec.items[index] or out[1]
-end
-
--- Picks a completing_read answer from a list. Tests set it; otherwise fzf,
--- when fzf.vim is loaded and there's a screen to show it on.
-M.picker = nil
-
-local function picker()
-  if M.picker then return M.picker end
-  if #vim.api.nvim_list_uis() > 0 and vim.fn.exists("*fzf#run") == 1 then return fzf_pick end
-end
 
 -- The answers to show, in order: the default, Emacs's history for this
 -- prompt (newest first), then the candidates.

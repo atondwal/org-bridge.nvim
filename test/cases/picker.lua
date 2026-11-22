@@ -8,6 +8,7 @@ local ui = require("emacs.ui")
 local function use_picker(t, pick)
   local specs = {}
   rpc.handlers.completing_read = ui.completing_read
+  rpc.handlers.read_string = ui.read_string
   ui.picker = function(spec)
     specs[#specs + 1] = spec
     return pick(spec)
@@ -45,6 +46,20 @@ return {
     answer = nil
     t.keys("M-x")
     t.eq(t.lines(), { "* A" }, "cancelled: the third M-x ran nothing")
+  end,
+
+  -- Without fast tag selection, org reads tags with completing-read-multiple.
+  ["org tags: the heading's tags start ticked; the ticked ones are set"] = function(t)
+    t.open("tags.org", "* A :work:\n")
+    t.eval([[(setq org-tag-alist '(("home") ("urgent") ("work")) org-use-fast-tag-selection nil)]])
+    local picked = { "work", "urgent" }
+    local specs = use_picker(t, function() return picked end)
+    t.keys("C-c C-q")
+    t.eq({ specs[1].multi, specs[1].selected, specs[1].items[1] }, { true, 1, "work" })
+    t.eq(t.lines(), { t.aligned("* A", ":work:urgent:") })
+    picked = nil
+    t.keys("C-c C-q")
+    t.eq(t.lines(), { t.aligned("* A", ":work:urgent:") }, "cancelled: tags unchanged")
   end,
 
   ["outline paths completed in steps skip the picker for Tab completion"] = function(t)

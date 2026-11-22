@@ -1734,6 +1734,9 @@ pending for Emacs."
   (if (consp x) (car x) x))
 
 (defvar crm-completion-table)
+(defvar crm-separator)
+(defvar crm-local-completion-map)
+(defvar crm-local-must-match-map)
 
 (defvar nvb--minibuffer-depth 0 "Minibuffers the bridge stands in for.")
 
@@ -1785,6 +1788,19 @@ MAP's C-g first, as C-g there would (Magit's kills the process asking)."
      (ignore-errors (call-interactively (lookup-key map [?\C-g])))
      (signal 'quit nil))))
 
+(defun nvb--multiple (keymap initial)
+  "For `completing-read-multiple' (org's tags), which reads with crm's
+KEYMAP: (:multiple CANDIDATES :selected ITEMS :joiner J), ITEMS those in
+INITIAL and J a string `crm-separator' matches, to join the answers with."
+  (when-let (((and (boundp 'crm-local-completion-map)
+                   (memq keymap (list crm-local-completion-map crm-local-must-match-map))))
+             (joiner (seq-find (lambda (j) (string-match-p (concat "\\`\\(?:" crm-separator "\\)\\'") j))
+                               '("," ":" ";" " "))))
+    (list :multiple (vconcat (seq-take (all-completions "" (car nvb--completion) (cdr nvb--completion))
+                                       nvb--max-candidates))
+          :selected (vconcat (split-string (or initial "") crm-separator t))
+          :joiner joiner)))
+
 (defun nvb--read-from-minibuffer (prompt &optional initial keymap read hist default &rest _)
   (let* ((init (nvb--first initial))
          (def (nvb--first default))
@@ -1798,6 +1814,7 @@ MAP's C-g first, as C-g there would (Magit's kills the process asking)."
                                             :history (nvb--history hist))
                                       (when nvb--completion
                                         (list :completion "customlist,EmacsComplete"))
+                                      (nvb--multiple keymap init)
                                       ;; Inside org-read-date: Neovim previews the date as you type.
                                       (when (bound-and-true-p org-defdecode) (list :date t))))
               ;; Pairs the setup hook run above (transient takes its keymap back).
