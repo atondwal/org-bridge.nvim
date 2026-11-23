@@ -51,17 +51,43 @@ return {
     t.eq(t.emacs_lines(source), { "* Source", "source text" })
   end,
 
+  -- org-transclusion binds e, o, d... on its copies only, as Emacs keymaps
+  -- on text do.
+  ["in a copy its keys go to Emacs; outside, Neovim's and the bridge's"] = function(t)
+    transclude(t, "tc_keys.org")
+    local function move(line)
+      t.cursor(line)
+      vim.cmd("doautocmd CursorMoved")
+    end
+    local org_o = vim.fn.maparg("o", "n", false, true).callback
+    move(t.find_line("^source text"))
+    t.eq(vim.fn.maparg("d", "n", false, true).desc, "org-bridge.nvim", "d is Emacs's in the copy")
+    t.eq(vim.fn.maparg("j", "n"), "", "passthrough j stays Neovim's")
+    move(1)
+    t.eq(vim.fn.maparg("d", "n"), "", "d is Vim's outside")
+    t.eq(vim.fn.maparg("o", "n", false, true).callback, org_o, "o is the bridge's open-line again")
+    -- d in the copy removes the transclusion; with the copy gone, so are its keys.
+    move(t.find_line("^source text"))
+    t.feed("d")
+    t.eq(t.lines(), { "* Note", "#+transclude: [[file:tc_source.org::*Source]]" })
+    t.eq(vim.fn.maparg("d", "n"), "", "d is Vim's again without moving")
+  end,
+
   ["with live sync, editing the copy in Neovim edits the source"] = function(t)
     local note, source = transclude(t, "tc_live.org")
     t.cursor(t.find_line("^source text"))
     t.command("org-transclusion-live-sync-start")
-    local row = t.find_line("^source text")
-    api.nvim_buf_set_lines(0, row - 1, row, false, { "source text, edited from the note" })
+    -- Typed at the copy's end, the text joins the copy, as typing in Emacs
+    -- would: C-c C-c below, on it, ends live sync.
+    t.feed("A, edited from the note\27")
     require("emacs.mirror").sync()
     t.eq(t.emacs_lines(source), { "* Source", "source text, edited from the note" })
+    -- Live sync shows the source in a window, which follows the edit.
+    assert(vim.wait(3000, function()
+      return vim.deep_equal(t.lines(vim.fn.bufnr(source)), { "* Source", "source text, edited from the note" })
+    end, 10), "source window: " .. vim.inspect(t.lines(vim.fn.bufnr(source))))
     -- C-c C-c ends live sync; :wall saves the source, and the note as a
     -- #+transclude line.
-    t.cursor(t.find_line("^source text"))
     t.keys("C-c C-c")
     vim.cmd("wall")
     t.eq(t.read_file(source), "* Source\nsource text, edited from the note\n")

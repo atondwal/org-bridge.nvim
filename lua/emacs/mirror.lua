@@ -319,6 +319,31 @@ local function covered(have, need)
   return true
 end
 
+-- Text with a keymap of its own in Emacs (org-transclusion's copies): an
+-- extmark per run, so it moves with edits, and the keys it binds.
+local REGION_NS = api.nvim_create_namespace("emacs.keymap_regions")
+local region_keys = {}
+
+-- The runs on the fetched lines, ranges [[L1 L2] ...], replace those there.
+local function apply_regions(buf, ranges, regions)
+  region_keys[buf] = region_keys[buf] or {}
+  for _, r in ipairs(ranges) do
+    for _, m in ipairs(api.nvim_buf_get_extmarks(buf, REGION_NS, { r[1], 0 }, { r[2], -1 }, {})) do
+      region_keys[buf][m[1]] = nil
+      api.nvim_buf_del_extmark(buf, REGION_NS, m[1])
+    end
+  end
+  for _, r in ipairs(regions) do
+    local id = api.nvim_buf_set_extmark(buf, REGION_NS, r[1][1], r[1][2],
+      { end_row = r[2][1], end_col = r[2][2], strict = false })
+    region_keys[buf][id] = r[3]
+  end
+  M.on_regions(buf)
+end
+
+-- Set by init.lua: the runs changed, so the keys under the cursor may have.
+function M.on_regions(_) end
+
 -- Fetch and draw faces/conceals for the lines visible in buf's windows.
 function M.refresh_spans(buf)
   local st = state[buf]
@@ -333,6 +358,7 @@ function M.refresh_spans(buf)
   local res = rpc.call("spans", { id = st.id, ranges = need })
   faces.add(res.faces)
   for _, r in ipairs(need) do api.nvim_buf_clear_namespace(buf, NS, r[1], r[2] + 1) end
+  apply_regions(buf, need, res.regions)
   local prio = {}
   local top_fill = 0
   local function line_len(line) return #(api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or "") end
@@ -580,6 +606,16 @@ local function apply_hunk(buf, hunk, join_undo)
     replace_lines(buf, first, old, new)
   end
   vim.bo[buf].modifiable = modifiable
+end
+
+-- The keys Emacs binds in the run under the cursor, with its extmark id;
+-- nil outside one.
+function M.region_keys_at(buf, row, col)
+  -- The runs starting at or before the cursor (0.9 has no `overlap`).
+  for _, m in ipairs(api.nvim_buf_get_extmarks(buf, REGION_NS, 0, { row, col }, { details = true })) do
+    local d = m[4]
+    if d.end_row > row or (d.end_row == row and d.end_col > col) then return region_keys[buf][m[1]], m[1] end
+  end
 end
 
 -- Apply one buffer record from Emacs.
