@@ -1293,6 +1293,17 @@ rpc.handlers.message = function(p)
   echo_line(p.text)
 end
 
+-- Neovim is about to write buf's own file: Emacs runs before-save-hook,
+-- and what it changes there (org-transclusion takes out its copies) is
+-- what gets written. after-save-hook ("saved") puts them back.
+function M.before_write(buf)
+  local res = rpc.call("before_save", { id = state[buf].id })
+  if res.text then
+    set_text(buf, res.text)
+    mark_synced(buf)
+  end
+end
+
 -- Emacs wants a file buffer saved: Neovim does all file writes.
 rpc.handlers.save = function(p)
   local buf = buffer_for({ id = p.id, file = p.file })

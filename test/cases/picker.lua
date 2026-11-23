@@ -62,6 +62,16 @@ return {
     t.eq(t.lines(), { t.aligned("* A", ":work:urgent:") }, "cancelled: tags unchanged")
   end,
 
+  -- org-roam's node table is a function only to add metadata.
+  ["a function table that declares a category lists all its answers"] = function(t)
+    t.open("category.org", "* A\n")
+    t.answer("y")
+    t.eq(t.eval([[(completing-read "Node: " (lambda (s p a)
+      (if (eq a 'metadata) '(metadata (category . org-roam-node)) (complete-with-action a '("x" "y") s p))))]]), '"y"')
+    local q = t.asked()[1].params
+    t.eq({ q.dynamic, q.candidates }, { false, { "x", "y" } })
+  end,
+
   ["outline paths completed in steps skip the picker for Tab completion"] = function(t)
     t.open("steps.org", t.DOC)
     t.eval([[(setq org-refile-targets '((nil :maxlevel . 2)) org-refile-history nil)]])

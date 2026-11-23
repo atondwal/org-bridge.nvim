@@ -165,6 +165,14 @@ A `quit' answer (the user pressed Escape) signals `quit'."
 (defvar nvb--unpulled nil
   "Non-nil from telling Neovim its windows changed until it asks for the state.")
 
+(defun nvb--notify-changes (before)
+  "Tell Neovim if anything it sees changed since signature BEFORE."
+  (let ((after (nvb--signature)))
+    (when (and (process-live-p nvb--conn) (not (equal before after)))
+      ;; Only a window change makes Neovim's layout wrong for a command.
+      (unless (equal (car before) (car after)) (setq nvb--unpulled t))
+      (nvb--send (list :method "changed")))))
+
 (defun nvb--signature ()
   "What Neovim sees of Emacs, cheaply: the windows, their buffers and
 points, and each shown or mirrored buffer's text, properties and overlay
@@ -217,11 +225,7 @@ count (magit-blame's headings)."
       ;; for Magit, emacsclient opening a commit message) ran meanwhile.
       ;; If they changed anything, Neovim asks for the state
       ;; (`nvb-rpc-refresh') when it can take it, not while the user types.
-      (let ((after (nvb--signature)))
-        (when (and (process-live-p nvb--conn) (not (equal before after)))
-          ;; Only a window change makes Neovim's layout wrong for a command.
-          (unless (equal (car before) (car after)) (setq nvb--unpulled t))
-          (nvb--send (list :method "changed")))))
+      (nvb--notify-changes before))
     (while nvb--inbox
       (nvb--handle (pop nvb--inbox)))))
 
@@ -315,7 +319,10 @@ Change hooks can't stand in: org makes some edits without running them.")
 common prefix and suffix is replaced, so change hooks see the edit rather
 than the whole span (org reveals folds a whole-buffer change touches) and
 unchanged text keeps its properties. Neovim sends one hunk per changed
-region, so the middle is replaced whole."
+region, so the middle is replaced whole. Text with a `read-only' property
+(org-transclusion's copies) signals `text-read-only' unless the caller
+binds `inhibit-read-only'; a read-only buffer doesn't, as Neovim owns
+the file."
   (let ((old (buffer-substring-no-properties beg end)))
     (unless (string= text old)
       (let* ((pre (nvb--common-prefix old text))
@@ -323,14 +330,21 @@ region, so the middle is replaced whole."
                        (- (min (length old) (length text)) pre)))
              (end (- end suf))
              (beg (+ beg pre))
-             (new (substring text pre (- (length text) suf)))
-             (inhibit-read-only t))
+             (new (substring text pre (- (length text) suf))))
+        (when (and (not inhibit-read-only)
+                   (if (< beg end)
+                       (text-property-not-all beg end 'read-only nil)
+                     (and (> beg (point-min))
+                          (get-text-property (1- beg) 'read-only)
+                          (get-text-property beg 'read-only))))
+          (signal 'text-read-only nil))
         ;; Not `replace-buffer-contents': with org's change hooks it can
         ;; signal beginning-of-buffer (found by test/fuzz.lua).
-        (save-excursion
-          (goto-char beg)
-          (delete-region beg end)
-          (insert new))))))
+        (let ((inhibit-read-only t))
+          (save-excursion
+            (goto-char beg)
+            (delete-region beg end)
+            (insert new)))))))
 
 (defun nvb--whole-text ()
   (nvb--in-view (buffer-substring-no-properties (point-min) (point-max))))
@@ -363,9 +377,19 @@ region, so the middle is replaced whole."
            (forward-line first)
            (let ((beg (point)))
              (forward-line count)
-             (nvb--replace-span beg (point) text))))
+             (condition-case nil
+                 (nvb--replace-span beg (point) text)
+               (text-read-only (nvb--refuse-edit))))))
+        ;; Neovim's copy has the hunk either way.
         (nvb--shadow-hunk-apply first count text))
-      (setq nvb--tick (buffer-chars-modified-tick)))))
+      ;; Unless an edit was refused: then Neovim must take our text back.
+      (when nvb--tick (setq nvb--tick (buffer-chars-modified-tick))))))
+
+(defun nvb--refuse-edit ()
+  "Neovim edited read-only text in the current buffer, as Emacs refuses
+to: the next update sends Neovim our text back, as the edit undone."
+  (setq nvb--tick nil)
+  (message "Text is read-only"))
 
 (defun nvb--common-suffix (a ea b eb limit)
   "Length of the longest common tail of the text before EA in buffer A and
@@ -422,7 +446,9 @@ places because unchanged text is not reinserted."
   ;; The disk's modtime first: an unmodified buffer whose file changed is a
   ;; supersession threat, which batch Emacs can't ask about.
   (with-current-buffer buf (set-visited-file-modtime))
-  (nvb--set-text buf text)
+  ;; The disk's text, read-only copies (org-transclusion's) or not.
+  (let ((inhibit-read-only t))
+    (nvb--set-text buf text))
   (with-current-buffer buf
     (nvb--in-view
      (with-silent-modifications
@@ -442,7 +468,12 @@ Neovim owns the file (`:e!' leaves the text unmodified, for instance)."
             ((plist-get s :hunks)
              (dolist (h (reverse (plist-get s :hunks)))
                (nvb--apply-hunk buf h)))
-            ((plist-get s :text) (nvb--set-text buf (plist-get s :text))))
+            ((plist-get s :text)
+             (condition-case nil
+                 (nvb--set-text buf (plist-get s :text))
+               (text-read-only (with-current-buffer buf
+                                 (nvb--shadow-text (plist-get s :text))
+                                 (nvb--refuse-edit))))))
       (when (plist-member s :modified)
         (with-current-buffer buf (set-buffer-modified-p (plist-get s :modified)))))))
 
@@ -1486,9 +1517,27 @@ file: staging a resolved conflict (vc-git), Magit's refresh."
   (run-hooks 'after-save-hook))
 
 (defun nvb-rpc-saved (params)
-  (with-current-buffer (nvb--buffer (plist-get params :id))
-    (nvb--saved))
+  ;; What after-save-hook changes (org-transclusion puts its copies back,
+  ;; Magit refreshes) reaches Neovim as Emacs's own changes do.
+  (let ((before (nvb--signature)))
+    (with-current-buffer (nvb--buffer (plist-get params :id))
+      (nvb--saved))
+    (nvb--notify-changes before))
   t)
+
+(defun nvb-rpc-before_save (params)
+  "Neovim is about to write buffer ID's file: run `before-save-hook' as
+`basic-save-buffer' would (org-transclusion takes its copies out, to put
+back in `after-save-hook'). Replies with the text to write if it changed."
+  (with-current-buffer (nvb--buffer (plist-get params :id))
+    (let ((tick (buffer-chars-modified-tick)))
+      (run-hooks 'before-save-hook)
+      (list :text (if (eql tick (buffer-chars-modified-tick))
+                      :false
+                    (let ((text (nvb--whole-text)))
+                      (nvb--shadow-text text)
+                      (setq nvb--tick (buffer-chars-modified-tick))
+                      text))))))
 
 (defun nvb-rpc-close (params)
   "Kill buffer ID's mirror. A file emacsclient waits on (a commit message)
@@ -1891,10 +1940,11 @@ it, or \"\" if none can be typed."
          (init (nvb--first initial))
          (cands (seq-take (all-completions (or init "") collection predicate) nvb--max-candidates))
          (def (nvb--first default))
-         ;; M-x's table is a function only to add metadata; its candidates
-         ;; are all the commands.
-         (commands (eq (completion-metadata-get (completion-metadata "" collection predicate) 'category)
-                       'command))
+         ;; Tables that declare a category (M-x's, org-roam's nodes) are
+         ;; functions only to add metadata; their candidates are all the
+         ;; answers.
+         (category (completion-metadata-get (completion-metadata "" collection predicate) 'category))
+         (commands (eq category 'command))
          ;; Bound in the buffer the command runs in, not a minibuffer.
          (bindings (when commands
                      (vconcat (mapcar (lambda (c) (nvb--binding (intern c))) cands))))
@@ -1910,7 +1960,7 @@ it, or \"\" if none can be typed."
                                      ;; Other function tables may complete a piece at a
                                      ;; time (outline paths), so their candidates aren't
                                      ;; all the answers.
-                                     :dynamic (nvb--bool (and (functionp collection) (not commands))))
+                                     :dynamic (nvb--bool (and (functionp collection) (not category))))
                                (when bindings (list :bindings bindings))))))
          (s (funcall ask)))
     ;; As RET in Emacs's minibuffer (`minibuffer-complete-and-exit'): with
@@ -1974,6 +2024,7 @@ Like `basic-save-buffer', an indirect buffer saves its base buffer."
             (if (y-or-n-p (format-message "Directory `%s' does not exist; create? " dir))
                 (make-directory dir t)
               (error "Canceled"))))
+        (run-hooks 'before-save-hook)
         (let ((text (nvb--whole-text)))
           (nvb--request "save" (list :id (nvb--mirror-id (current-buffer))
                                      :file file

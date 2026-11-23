@@ -150,8 +150,12 @@ With lualine, add `require("emacs").statusline` to a section. Quitting
 Neovim while a clock runs offers to clock out first.
 
 Neovim does all file writes. When Emacs saves (capture, `org-save-all-org-buffers`),
-the save goes through `:write`. Either way Emacs then runs `after-save-hook`,
-so saving a file with its conflicts resolved stages it, as in Emacs.
+the save goes through `:write`. Either way Emacs runs `before-save-hook` and
+`after-save-hook` around it, so saving a file with its conflicts resolved
+stages it, org-roam's database follows your saves, and org-transclusion's
+copies stay out of the file. As in Emacs, a transcluded copy is read-only
+(an edit there is undone) until you start live sync on it
+(`org-transclusion-live-sync-start`); then edits go to the source.
 
 What Emacs does on its own between commands (a timer, a process finishing,
 a file `emacsclient` opens) shows up in Neovim by itself, once you are in

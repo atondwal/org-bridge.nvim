@@ -432,7 +432,15 @@ mirror.on_bind = function(buf)
   -- markers left). Once the file is written, Emacs would refuse the edits
   -- as changes to a file changed on disk.
   api.nvim_create_autocmd("BufWritePre", {
-    group = group, buffer = buf, callback = guarded(mirror.sync),
+    group = group, buffer = buf,
+    callback = guarded(function()
+      mirror.sync()
+      -- Only for the buffer's own file: a copy (:w copy.org) gets no
+      -- after-save-hook to undo what this does.
+      if rpc.depth == 0 and vim.fn.expand("<afile>:p") == api.nvim_buf_get_name(buf) then
+        mirror.before_write(buf)
+      end
+    end),
   })
   api.nvim_create_autocmd("BufReadPost", {
     group = group, buffer = buf, callback = function() mirror.on_reload(buf) end,
