@@ -8,6 +8,8 @@ local api = vim.api
 local M = {}
 
 local NS = api.nvim_create_namespace("emacs")
+api.nvim_set_hl(0, "EmacsTransclusionBorder", { link = "Comment", default = true })
+api.nvim_set_hl(0, "EmacsTransclusionLabel", { link = "Comment", default = true })
 local SYNC_DELAY_MS = 150
 local POINT_SYNC_DELAY_MS = 150
 -- How often a change Emacs made outside a command checks whether the
@@ -421,6 +423,21 @@ function M.refresh_spans(buf)
     local chunks = vim.tbl_map(function(r) return { r[1], r[2] and faces.group(r[2]) or "Normal" } end, m[2])
     api.nvim_buf_set_extmark(buf, NS, m[1], 0, { virt_text = chunks, virt_text_pos = "right_align" })
   end
+  -- #+transclude: lines: the source's text drawn under them, never in the
+  -- buffer, so it can't end up in the file. Redrawn when the source changes.
+  st.transcluded = st.transcluded or {}
+  for _, tc in ipairs(res.transclusions) do
+    local lines = vim.tbl_map(function(runs)
+      local chunks = { { "│ ", "EmacsTransclusionBorder" } }
+      for _, r in ipairs(runs) do chunks[#chunks + 1] = { r[1], r[2] and faces.group(r[2]) or "Normal" } end
+      return chunks
+    end, tc[3])
+    api.nvim_buf_set_extmark(buf, NS, tc[1], 0, {
+      virt_text = { { " " .. tc[2], "EmacsTransclusionLabel" } }, virt_text_pos = "eol",
+      virt_lines = #lines > 0 and lines or nil,
+    })
+    if tc[4] then st.transcluded[tc[4]] = true end
+  end
   -- Neovim scrolls lines above the first one out of view; Emacs shows them.
   -- Reset when they go, too, or 0.13 leaves a stale screen line.
   if need[1][1] == 0 then
@@ -758,9 +775,25 @@ function M.sync()
   local res = rpc.call("sync", { syncs = syncs })
   delivered()
   apply_buffers(res.buffers)
+  local edited = {}
   for _, s in ipairs(syncs) do
     local buf = by_id[s.id]
-    if buf then M.refresh_spans(buf) end
+    if buf then
+      M.refresh_spans(buf)
+      edited[api.nvim_buf_get_name(buf)] = true
+    end
+  end
+  -- Shown notes transcluding an edited file draw its new text.
+  for b, bst in pairs(state) do
+    if bst.transcluded and #vim.fn.win_findbuf(b) > 0 then
+      for file in pairs(bst.transcluded) do
+        if edited[file] then
+          bst.spans = nil
+          M.refresh_spans(b)
+          break
+        end
+      end
+    end
   end
 end
 

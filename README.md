@@ -154,6 +154,12 @@ the save goes through `:write`. Either way Emacs runs `before-save-hook` and
 `after-save-hook` around it, so saving a file with its conflicts resolved
 stages it, and org-roam's database follows your saves.
 
+Transclusion: under a `#+transclude: [[file:notes.org::*Heading]]` line
+(also `[[id:...]]`, or a whole `[[file:notes.org]]`), Neovim draws the
+source's text, marked `│`; it is never in the buffer, so it can't end up in
+the file. `C-c '` on the line opens the source at that text in a split, and
+the drawing follows your edits there. No package is needed.
+
 What Emacs does on its own between commands (a timer, a process finishing,
 a file `emacsclient` opens) shows up in Neovim by itself, once you are in
 Normal mode. You stay in the window you went to, unless Emacs selects

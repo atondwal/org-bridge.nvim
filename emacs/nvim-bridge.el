@@ -83,6 +83,8 @@ Bound per request in `nvb--handle'.")
 (declare-function org-element-cache-reset "org-element")
 (declare-function org-fold-show-entry "org-fold")
 (declare-function org-fold-show-children "org-fold")
+(declare-function org-fold-show-subtree "org-fold")
+(declare-function org-id-find "org-id")
 (declare-function org-fold-hide-subtree "org-fold")
 (declare-function org-fold-folded-p "org-fold")
 (declare-function org-id-locations-save "org-id")
@@ -673,6 +675,108 @@ margin (Magit's log dates)."
   (and (consp display)
        (or (memq (car display) '(left-fringe right-fringe))
            (and (consp (car display)) (eq (caar display) 'margin)))))
+
+(defconst nvb--transclude-re "^[ \t]*#\\+transclude:[ \t]*\\(.*\\)$"
+  "An org-transclusion keyword line; its value is a bracket link.")
+
+(defun nvb--subtree-range (buf pos)
+  "(BUF BEG END) for the subtree of the heading at POS in BUF, without the
+blank lines after it."
+  (with-current-buffer buf
+    (save-excursion
+      (save-restriction
+        (widen)
+        (goto-char pos)
+        (org-back-to-heading t)
+        (let ((beg (point)))
+          (org-end-of-subtree t t)
+          (skip-chars-backward " \t\n")
+          (list buf beg (point)))))))
+
+(defun nvb--transclusion-target (value)
+  "The text the link in #+transclude: VALUE shows, as (BUFFER BEG END), or
+a string saying why there is none. file:X::*HEADING and id:ID show the
+heading's subtree, file:X the whole file."
+  (if (not (string-match org-link-bracket-re value))
+      "no link"
+    (let ((link (match-string 1 value)))
+      (cond
+       ((string-prefix-p "id:" link)
+        (let ((marker (org-id-find (substring link 3) 'marker)))
+          (if marker
+              (nvb--subtree-range (marker-buffer marker) marker)
+            (format "no heading with ID %s" (substring link 3)))))
+       ((string-prefix-p "file:" link)
+        (pcase-let* ((`(,path ,search) (split-string (substring link 5) "::"))
+                     (file (expand-file-name path)))
+          (cond
+           ((not (file-readable-p file)) (format "no file %s" path))
+           ((null search)
+            (let ((buf (find-file-noselect file)))
+              (with-current-buffer buf
+                (save-excursion
+                  (goto-char (point-max))
+                  (skip-chars-backward " \t\n")
+                  (list buf 1 (point))))))
+           ((string-prefix-p "*" search)
+            (let* ((buf (find-file-noselect file))
+                   (marker (org-find-exact-headline-in-buffer (substring search 1) buf)))
+              (if marker
+                  (nvb--subtree-range buf marker)
+                (format "no heading %s in %s" (substring search 1) path))))
+           (t (format "can't show %s" link)))))
+       (t (format "can't show %s" link))))))
+
+(defun nvb--transclusion-lines (buf beg end)
+  "BUF's text from BEG to END as lines of [TEXT FACE] runs, in BUF's faces."
+  (with-current-buffer buf
+    (font-lock-ensure beg end)
+    (vconcat (mapcar (lambda (line)
+                       (or (nvb--display-runs line nil) (vector (vector line nil))))
+                     (split-string (buffer-substring beg end) "\n")))))
+
+(defun nvb--transclusions (l1 l2)
+  "[LINE LABEL LINES FILE] for each #+transclude: line on lines L1..L2:
+Neovim draws LINES (`nvb--transclusion-lines') under it and LABEL after
+it, and redraws when FILE, the source, changes. LINES is empty and FILE
+:false when the link doesn't resolve; LABEL says why."
+  (nvb--in-view
+   (save-excursion
+     (goto-char (point-min))
+     (forward-line l1)
+     (let ((case-fold-search t)
+           (end (save-excursion (forward-line (1+ (- l2 l1))) (point)))
+           out)
+       (while (re-search-forward nvb--transclude-re end t)
+         (let* ((value (match-string 1))
+                (line (1- (line-number-at-pos)))
+                (target (nvb--transclusion-target value)))
+           (push (if (stringp target)
+                     (vector line (concat "⇣ " target) [] :false)
+                   (pcase-let* ((`(,buf ,beg ,end) target)
+                                (lines (nvb--transclusion-lines buf beg end)))
+                     (vector line
+                             (format "⇣ %s (%d lines)" (file-name-nondirectory (buffer-file-name buf))
+                                     (length lines))
+                             lines
+                             (buffer-file-name buf))))
+                 out)))
+       (nreverse out)))))
+
+(defun nvb--transclusion-edit (&rest _)
+  "On a #+transclude: line, show the source at the transcluded text in
+another window, as `org-edit-special' (C-c \=') does for a block; Neovim
+splits for it. Nil elsewhere, for `org-edit-special' to go on."
+  (when-let ((value (save-excursion
+                      (beginning-of-line)
+                      (let ((case-fold-search t))
+                        (and (looking-at nvb--transclude-re) (match-string 1))))))
+    (let ((target (nvb--transclusion-target value)))
+      (when (stringp target) (user-error "Transclusion: %s" target))
+      (pop-to-buffer (car target))
+      (goto-char (cadr target))
+      (when (org-at-heading-p) (org-fold-show-subtree))
+      t)))
 
 (defun nvb--main-face (face)
   "One face name for a `face' property value: a named face (org-column)
@@ -1465,14 +1569,19 @@ lines between its delimiters) without the blank lines after it."
     (let* ((ranges (plist-get params :ranges))
            (spans (cl-mapcan (lambda (r) (nvb--spans (car r) (cadr r))) ranges))
            (prefixes (apply #'vconcat (mapcar (lambda (r) (nvb--line-prefixes (car r) (cadr r))) ranges)))
-           (margins (apply #'vconcat (mapcar (lambda (r) (nvb--margin-strings (car r) (cadr r))) ranges))))
+           (margins (apply #'vconcat (mapcar (lambda (r) (nvb--margin-strings (car r) (cadr r))) ranges)))
+           (transclusions (vconcat (cl-mapcan (lambda (r) (nvb--transclusions (car r) (cadr r))) ranges))))
       (list :spans (vconcat (mapcar #'vconcat spans))
             :prefixes prefixes
             :margins margins
+            :transclusions transclusions
             :faces (nvb--new-faces (append (nvb--span-faces spans)
                                            (seq-map (lambda (p) (aref p 2)) prefixes)
                                            (seq-mapcat (lambda (m) (seq-map (lambda (r) (aref r 1)) (aref m 1)))
-                                                       margins)))
+                                                       margins)
+                                           (seq-mapcat (lambda (tc) (seq-mapcat (lambda (line) (seq-map (lambda (r) (aref r 1)) line))
+                                                                                (aref tc 2)))
+                                                       transclusions)))
             :tick (buffer-chars-modified-tick)))))
 
 (defun nvb-rpc-rename (params)
@@ -2126,6 +2235,7 @@ evaluates them in Lisp instead."
     ;; (transient 0.4 puts them back to read "-a").
     (this-single-command-raw-keys :override this-single-command-keys)
     (basic-save-buffer :override nvb--save-buffer)
+    (org-edit-special :before-until nvb--transclusion-edit)
     (org-string-width :around nvb--org-string-width)
     ;; Themes and custom-set-faces end up here too.
     (set-face-attribute :after nvb--faces-changed)
