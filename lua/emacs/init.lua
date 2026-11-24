@@ -368,47 +368,8 @@ local function install_edit_keys(buf)
   if vim.bo[buf].filetype == "org" then install_org_keys(buf) end
 end
 
--- Keys a run of text binds in Emacs (org-transclusion's e, o, d on its
--- copies) go to Emacs while the cursor is in the run, as in read-only
--- buffers: passthrough keys stay Neovim's. A mapping a key replaced comes
--- back when the cursor leaves.
-local region_maps = {}
-
-local function leave_region(buf)
-  local r = region_maps[buf]
-  if not r then return end
-  region_maps[buf] = nil
-  for lhs, saved in pairs(r.saved) do
-    pcall(vim.keymap.del, "n", lhs, { buffer = buf })
-    if saved then vim.fn.mapset("n", false, saved) end
-  end
-end
-
-local function update_region_keys(buf)
-  if buf ~= api.nvim_get_current_buf() then return end
-  local cursor = api.nvim_win_get_cursor(0)
-  local region, id = mirror.region_keys_at(buf, cursor[1] - 1, cursor[2])
-  if (region_maps[buf] and region_maps[buf].id) == id then return end
-  leave_region(buf)
-  if not region then return end
-  local keep = {}
-  for _, k in ipairs(mirror.config.passthrough) do keep[k] = true end
-  local saved = {}
-  for _, k in ipairs(region) do
-    if not keep[k] then
-      local m = vim.fn.maparg(k, "n", false, true)
-      saved[k] = m.buffer == 1 and m or false
-      map(buf, "n", k, key_handler(k, "n"))
-    end
-  end
-  region_maps[buf] = { id = id, saved = saved }
-end
-
-mirror.on_regions = update_region_keys
-
 local function install_keys(buf, kind)
   menu_keys[buf] = nil
-  region_maps[buf] = nil
   for _, m in ipairs(api.nvim_buf_get_keymap(buf, "")) do
     if m.desc == "org-bridge.nvim" then vim.keymap.del(m.mode, m.lhs, { buffer = buf }) end
   end
@@ -445,9 +406,6 @@ mirror.on_bind = function(buf)
   })
   api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
     group = group, buffer = buf, callback = mirror.schedule_sync,
-  })
-  api.nvim_create_autocmd("CursorMoved", {
-    group = group, buffer = buf, callback = function() update_region_keys(buf) end,
   })
   api.nvim_create_autocmd("BufWinEnter", {
     group = group, buffer = buf,

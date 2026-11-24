@@ -319,10 +319,7 @@ Change hooks can't stand in: org makes some edits without running them.")
 common prefix and suffix is replaced, so change hooks see the edit rather
 than the whole span (org reveals folds a whole-buffer change touches) and
 unchanged text keeps its properties. Neovim sends one hunk per changed
-region, so the middle is replaced whole. Text with a `read-only' property
-(org-transclusion's copies) signals `text-read-only' unless the caller
-binds `inhibit-read-only'; a read-only buffer doesn't, as Neovim owns
-the file."
+region, so the middle is replaced whole."
   (let ((old (buffer-substring-no-properties beg end)))
     (unless (string= text old)
       (let* ((pre (nvb--common-prefix old text))
@@ -330,23 +327,14 @@ the file."
                        (- (min (length old) (length text)) pre)))
              (end (- end suf))
              (beg (+ beg pre))
-             (new (substring text pre (- (length text) suf))))
-        (when (and (not inhibit-read-only)
-                   (if (< beg end)
-                       (text-property-not-all beg end 'read-only nil)
-                     (and (> beg (point-min))
-                          (get-text-property (1- beg) 'read-only)
-                          (get-text-property beg 'read-only))))
-          (signal 'text-read-only nil))
+             (new (substring text pre (- (length text) suf)))
+             (inhibit-read-only t))
         ;; Not `replace-buffer-contents': with org's change hooks it can
         ;; signal beginning-of-buffer (found by test/fuzz.lua).
-        (let ((inhibit-read-only t))
-          (save-excursion
-            (goto-char beg)
-            (delete-region beg end)
-            ;; As typing in Emacs, the text takes its neighbours' sticky
-            ;; properties (org-transclusion's mark on a copy's text).
-            (insert-and-inherit new)))))))
+        (save-excursion
+          (goto-char beg)
+          (delete-region beg end)
+          (insert new))))))
 
 (defun nvb--whole-text ()
   (nvb--in-view (buffer-substring-no-properties (point-min) (point-max))))
@@ -379,19 +367,9 @@ the file."
            (forward-line first)
            (let ((beg (point)))
              (forward-line count)
-             (condition-case nil
-                 (nvb--replace-span beg (point) text)
-               (text-read-only (nvb--refuse-edit))))))
-        ;; Neovim's copy has the hunk either way.
+             (nvb--replace-span beg (point) text))))
         (nvb--shadow-hunk-apply first count text))
-      ;; Unless an edit was refused: then Neovim must take our text back.
-      (when nvb--tick (setq nvb--tick (buffer-chars-modified-tick))))))
-
-(defun nvb--refuse-edit ()
-  "Neovim edited read-only text in the current buffer, as Emacs refuses
-to: the next update sends Neovim our text back, as the edit undone."
-  (setq nvb--tick nil)
-  (message "Text is read-only"))
+      (setq nvb--tick (buffer-chars-modified-tick)))))
 
 (defun nvb--common-suffix (a ea b eb limit)
   "Length of the longest common tail of the text before EA in buffer A and
@@ -448,9 +426,7 @@ places because unchanged text is not reinserted."
   ;; The disk's modtime first: an unmodified buffer whose file changed is a
   ;; supersession threat, which batch Emacs can't ask about.
   (with-current-buffer buf (set-visited-file-modtime))
-  ;; The disk's text, read-only copies (org-transclusion's) or not.
-  (let ((inhibit-read-only t))
-    (nvb--set-text buf text))
+  (nvb--set-text buf text)
   (with-current-buffer buf
     (nvb--in-view
      (with-silent-modifications
@@ -470,12 +446,7 @@ Neovim owns the file (`:e!' leaves the text unmodified, for instance)."
             ((plist-get s :hunks)
              (dolist (h (reverse (plist-get s :hunks)))
                (nvb--apply-hunk buf h)))
-            ((plist-get s :text)
-             (condition-case nil
-                 (nvb--set-text buf (plist-get s :text))
-               (text-read-only (with-current-buffer buf
-                                 (nvb--shadow-text (plist-get s :text))
-                                 (nvb--refuse-edit))))))
+            ((plist-get s :text) (nvb--set-text buf (plist-get s :text))))
       (when (plist-member s :modified)
         (with-current-buffer buf (set-buffer-modified-p (plist-get s :modified)))))))
 
@@ -854,41 +825,6 @@ Neovim's."
                        (not (nvb--vim-key-p key b)))
               (push (concat "M-" (string c)) keys))))
         (vconcat (nreverse keys))))))
-
-(defun nvb--own-printable-keys (map)
-  "Printable keys MAP itself (not a parent) binds to commands, sorted."
-  (let (keys)
-    (map-keymap-internal
-     (lambda (ev def)
-       (when (and (integerp ev) (<= ?! ev ?~) (symbolp def) (commandp def)
-                  (not (memq def '(self-insert-command undefined))))
-         (push (string ev) keys)))
-     map)
-    (sort keys #'string<)))
-
-(defun nvb--keymap-regions (l1 l2)
-  "[START END KEYS] for each run of text on lines L1..L2 with a keymap of
-its own (a `local-map' or `keymap' property, as on org-transclusion's
-copies) that binds printable KEYS: Neovim sends those to Emacs while its
-cursor is in the run. START and END are [LINE COL], cut to the lines.
-Only shown lines: a big file has a run per link."
-  (nvb--in-view
-   (save-excursion
-     (goto-char (point-min))
-     (forward-line l1)
-     (let ((beg (point))
-           (end (progn (forward-line (1+ (- l2 l1))) (point)))
-           out)
-       (dolist (prop '(local-map keymap))
-         (let ((pos beg))
-           (while (< pos end)
-             (let ((map (get-char-property pos prop))
-                   (next (min end (next-single-char-property-change pos prop nil end))))
-               (when-let (((keymapp map))
-                          (keys (nvb--own-printable-keys map)))
-                 (push (vector (nvb--lc pos) (nvb--lc next) (vconcat keys)) out))
-               (setq pos next)))))
-       (nreverse out)))))
 
 (defun nvb--buffer-state (buf)
   "Update record for BUF: text if Neovim's copy is stale, folds if changed."
@@ -1471,17 +1407,12 @@ one). Batch Emacs never goes idle on its own.")
       (timer-event-handler timer))))
 
 (defun nvb-rpc-sync (params)
-  "Take Neovim's text for edited mirrors; report them, the base buffer of
-an indirect one (capture's edits are its target's), and any other mirror
-the edits changed (org-transclusion's live sync edits the source)."
+  "Take Neovim's text for edited mirrors; report them, and the base buffer
+of an indirect one (capture's edits are its target's)."
   (nvb--apply-syncs (plist-get params :syncs))
   (let ((bufs (mapcar (lambda (s) (nvb--buffer (plist-get s :id))) (plist-get params :syncs))))
     (dolist (b bufs)
       (when (buffer-base-buffer b) (cl-pushnew (buffer-base-buffer b) bufs)))
-    (dolist (b (hash-table-values nvb--mirrors))
-      (when (and (buffer-live-p b)
-                 (not (eql (buffer-local-value 'nvb--tick b) (buffer-chars-modified-tick b))))
-        (cl-pushnew b bufs)))
     (list :buffers (vconcat (mapcar #'nvb--buffer-state bufs)))))
 
 (defun nvb-rpc-refresh (params)
@@ -1538,7 +1469,6 @@ lines between its delimiters) without the blank lines after it."
       (list :spans (vconcat (mapcar #'vconcat spans))
             :prefixes prefixes
             :margins margins
-            :regions (vconcat (cl-mapcan (lambda (r) (nvb--keymap-regions (car r) (cadr r))) ranges))
             :faces (nvb--new-faces (append (nvb--span-faces spans)
                                            (seq-map (lambda (p) (aref p 2)) prefixes)
                                            (seq-mapcat (lambda (m) (seq-map (lambda (r) (aref r 1)) (aref m 1)))
@@ -1560,8 +1490,8 @@ file: staging a resolved conflict (vc-git), Magit's refresh."
   (run-hooks 'after-save-hook))
 
 (defun nvb-rpc-saved (params)
-  ;; What after-save-hook changes (org-transclusion puts its copies back,
-  ;; Magit refreshes) reaches Neovim as Emacs's own changes do.
+  ;; What after-save-hook changes (Magit refreshes) reaches Neovim as
+  ;; Emacs's own changes do.
   (let ((before (nvb--signature)))
     (with-current-buffer (nvb--buffer (plist-get params :id))
       (nvb--saved))
@@ -1570,8 +1500,7 @@ file: staging a resolved conflict (vc-git), Magit's refresh."
 
 (defun nvb-rpc-before_save (params)
   "Neovim is about to write buffer ID's file: run `before-save-hook' as
-`basic-save-buffer' would (org-transclusion takes its copies out, to put
-back in `after-save-hook'). Replies with the text to write if it changed."
+`basic-save-buffer' would. Replies with the text to write if it changed."
   (with-current-buffer (nvb--buffer (plist-get params :id))
     (let ((tick (buffer-chars-modified-tick)))
       (run-hooks 'before-save-hook)

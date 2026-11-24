@@ -130,6 +130,33 @@ return {
       "the edit is made to the disk's text")
   end,
 
+  -- Neovim writes the file, around Emacs's save hooks as basic-save-buffer
+  -- runs them: what before-save-hook changes is written.
+  [":w and C-x C-s write what before-save-hook leaves"] = function(t)
+    local path = t.open("before_save.org", "* A   \n")
+    t.eval([[(with-current-buffer "before_save.org"
+      (add-hook 'before-save-hook #'delete-trailing-whitespace nil t))]])
+    vim.cmd("write")
+    t.eq({ t.read_file(path), t.lines(), vim.bo.modified }, { "* A\n", { "* A" }, false })
+    api.nvim_buf_set_lines(0, 0, 1, false, { "* B   " })
+    t.keys("C-x C-s")
+    t.eq({ t.read_file(path), t.lines(), vim.bo.modified }, { "* B\n", { "* B" }, false })
+  end,
+
+  -- after-save-hook runs outside a command's reply.
+  ["what after-save-hook changes reaches Neovim, unmodified as Emacs left it"] = function(t)
+    t.open("after_save.org", "* A\n")
+    t.command("ignore")
+    t.eval([[(with-current-buffer "after_save.org"
+      (add-hook 'after-save-hook
+                (lambda () (save-excursion (goto-char (point-max)) (insert "* Added\n"))
+                  (set-buffer-modified-p nil))
+                nil t))]])
+    vim.cmd("write")
+    assert(vim.wait(3000, function() return #t.lines() == 2 end, 10), "lines: " .. vim.inspect(t.lines()))
+    t.eq({ t.lines(), vim.bo.modified }, { { "* A", "* Added" }, false })
+  end,
+
   [":e! drops synced and unsynced Neovim edits on both sides"] = function(t)
     local path = t.open("e_bang.org", t.DOC)
     api.nvim_buf_set_lines(0, 0, 1, false, { "* A synced" })
